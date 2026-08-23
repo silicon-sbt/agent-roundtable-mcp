@@ -25,7 +25,6 @@ def parse_args() -> argparse.Namespace:
             "codex",
             "grok",
             "antigravity",
-            "copilot",
         ],
         help="LLM provider. auto uses persona/council config or falls back to mock.",
     )

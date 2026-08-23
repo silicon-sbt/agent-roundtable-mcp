@@ -117,7 +117,7 @@ OpenAI and DeepSeek are also supported:
 
 ```env
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5.6-luna
 
 DEEPSEEK_API_KEY=
 DEEPSEEK_MODEL=deepseek-v4-flash
@@ -128,9 +128,9 @@ DeepSeek uses an OpenAI-compatible API with `base_url=https://api.deepseek.com`.
 
 - `deepseek-v4-flash`
 - `deepseek-v4-pro`
-- `deepseek-chat` and `deepseek-reasoner` are legacy names scheduled for deprecation by DeepSeek on 2026-07-24 23:59 Beijing time.
+- DeepSeek legacy aliases are not hardcoded; use the latest live catalog in `config/model_example.json`.
 
-`claude` / `codex` always use the official local CLIs and the user's own subscription login state. `codex_proxy` / `grok` / `antigravity` / `copilot` always use local CLIProxyAPI HTTP. Environment variables cannot swap the two identity classes. Chain syntax is documented in `config/model_example.json`:
+`claude` / `codex` always use the official local CLIs and the user's own subscription login state. `codex_proxy` / `grok` / `antigravity` always use local CLIProxyAPI HTTP. Copilot and Ollama Cloud are removed. Environment variables cannot swap the two identity classes. Chain syntax is documented in `config/model_example.json`:
 
 ```text
 provider:model@effort
@@ -146,19 +146,18 @@ claude:sonnet@high, codex:gpt-5.6-terra@medium, codex_proxy:gpt-5.6-terra@medium
 
 ### Optional: CLIProxyAPI
 
-Provider-chain entries for `codex_proxy` / `antigravity` / `grok` / `copilot` require a separate **CLIProxyAPI** service running locally. It exposes free Codex accounts and other proxy accounts through an OpenAI-compatible HTTP endpoint; `codex_proxy` is deliberately distinct from the user's own `codex` subscription CLI.
+Provider-chain entries for `codex_proxy` / `antigravity` / `grok` require a separate **CLIProxyAPI** service running locally. It exposes free Codex accounts and other proxy accounts through an OpenAI-compatible HTTP endpoint; `codex_proxy` is deliberately distinct from the user's own `codex` subscription CLI.
 
 - Project: <https://github.com/router-for-me/CLIProxyAPI>
-- After starting it, the default listen address is `http://127.0.0.1:8317`.
-- Point this project at it in `.env`:
+- Start it normally; `llm_gateway` discovers the address and key read-only from
+  `~/.cli-proxy-api/config.yaml`.
+- This project no longer duplicates those values; only the timeout is optional:
 
 ```env
-CLI_PROXY_BASE_URL=http://127.0.0.1:8317
-CLI_PROXY_API_KEY=local        # must match an entry in CLIProxyAPI's api-keys
 CLI_PROXY_TIMEOUT=600
 ```
 
-If you do not use the `codex_proxy` / `antigravity` / `grok` / `copilot` chains, CLIProxyAPI is **not** required — direct APIs (Gemini/OpenAI/OpenRouter/DeepSeek) and the official local Claude/Codex CLIs do not depend on it.
+If you do not use the `codex_proxy` / `antigravity` / `grok` chains, CLIProxyAPI is **not** required — direct APIs (Gemini/OpenAI/OpenRouter/DeepSeek) and the official local Claude/Codex CLIs do not depend on it.
 
 ## Per-Agent Model Config
 

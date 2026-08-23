@@ -118,7 +118,7 @@ OpenAI 和 DeepSeek 也预留了配置：
 
 ```env
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5.6-luna
 
 DEEPSEEK_API_KEY=
 DEEPSEEK_MODEL=deepseek-v4-flash
@@ -129,10 +129,9 @@ DeepSeek 使用 OpenAI 兼容接口，`base_url` 是 `https://api.deepseek.com`�
 
 - `deepseek-v4-flash`
 - `deepseek-v4-pro`
-- `deepseek-chat`：兼容旧名，DeepSeek 文档说明将于北京时间 2026-07-24 23:59 弃用。
-- `deepseek-reasoner`：兼容旧名，DeepSeek 文档说明将于北京时间 2026-07-24 23:59 弃用。
+- DeepSeek 模型不手写兼容旧名；以 `config/model_example.json` 最近一次实时目录为准。
 
-`claude` / `codex` 固定通过官方本地 CLI 复用用户自己的订阅登录态；`codex_proxy` / `grok` / `antigravity` / `copilot` 固定走本机 CLIProxyAPI HTTP。两类身份不能通过 `.env` 互相覆盖。模型链语法见 `config/model_example.json`：
+`claude` / `codex` 固定通过官方本地 CLI 复用用户自己的订阅登录态；`codex_proxy` / `grok` / `antigravity` 固定走本机 CLIProxyAPI HTTP。两类身份不能通过 `.env` 互相覆盖。Copilot 与 Ollama Cloud 已移除。模型链语法见 `config/model_example.json`：
 
 ```text
 provider:model@effort
@@ -148,19 +147,17 @@ claude:sonnet@high, codex:gpt-5.6-terra@medium, codex_proxy:gpt-5.6-terra@medium
 
 ### 可选依赖：CLIProxyAPI
 
-`codex_proxy` / `antigravity` / `grok` / `copilot` 这几类 provider-chain 条目，需要在本机另外运行 **CLIProxyAPI** 才能调用。它是一个独立的开源代理服务，把免费 Codex 账号及其他代理账号统一暴露成 OpenAI-compatible HTTP 接口；`codex_proxy` 特意与用户自己的 `codex` 订阅 CLI 分开命名。
+`codex_proxy` / `antigravity` / `grok` 这几类 provider-chain 条目，需要在本机另外运行 **CLIProxyAPI** 才能调用。它是一个独立的开源代理服务，把免费 Codex 账号及其他代理账号统一暴露成 OpenAI-compatible HTTP 接口；`codex_proxy` 特意与用户自己的 `codex` 订阅 CLI 分开命名。
 
 - 项目地址：<https://github.com/router-for-me/CLIProxyAPI>
-- 按它的说明启动后，默认监听 `http://127.0.0.1:8317`。
-- 然后在本项目的 `.env` 里指向它：
+- 按它的说明启动；`llm_gateway` 默认从 `~/.cli-proxy-api/config.yaml` 只读发现地址和 key。
+- 项目不再复制这两项，只需按需设置超时：
 
 ```env
-CLI_PROXY_BASE_URL=http://127.0.0.1:8317
-CLI_PROXY_API_KEY=local        # 与 CLIProxyAPI 配置里的 api-keys 对应
 CLI_PROXY_TIMEOUT=600
 ```
 
-如果你不用 `codex_proxy` / `antigravity` / `grok` / `copilot` 这些链，就**不需要** CLIProxyAPI —— 直连 API（Gemini/OpenAI/OpenRouter/DeepSeek）和 Claude/Codex 官方本地 CLI 都不依赖它。
+如果你不用 `codex_proxy` / `antigravity` / `grok` 这些链，就**不需要** CLIProxyAPI —— 直连 API（Gemini/OpenAI/OpenRouter/DeepSeek）和 Claude/Codex 官方本地 CLI 都不依赖它。
 
 ## 每个 Agent 用什么模型
 
@@ -592,7 +589,7 @@ python main.py --topic "测试一下" --council experts --rounds 1 --mock
 
 ### UI 里的模型从哪里来？
 
-UI 现在直接编辑 provider-chain。常用模型链来自 `config/model_example.json`，真实调用时仍按 `config/agent_llms.json` 和 `.env` 执行。
+UI 直接编辑 provider-chain。关闭“实时模型”时使用 `config/model_catalog.json` 的稳定回退清单；开启后，共享 `llm_gateway` 为 Codex 读取 `~/.codex/models_cache.json`、为 Claude 返回官方稳定别名，并为 Codex Proxy / Antigravity / Grok 按 CLIProxyAPI `/v1/models` 的 `owned_by` 过滤；API provider 也统一由 gateway 读取各自模型接口。真实调用仍按 `config/agent_llms.json` 和 `.env` 执行。
 
 ### 为什么真实 LLM 运行失败？
 

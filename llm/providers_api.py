@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
+
+from llm_gateway.direct import run_direct
 
 from .environment import load_project_env
 
@@ -156,43 +155,22 @@ class GeminiLLM:
         raise RuntimeError(f"Gemini request failed for all configured keys: {last_error}") from last_error
 
     def _generate_with_key(self, prompt: str, api_key: str, model: str) -> str:
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={api_key}"
-        )
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": self.temperature,
-                "maxOutputTokens": self.max_output_tokens,
-            },
-        }
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise GeminiAPIError(exc.code, detail) from exc
-
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise RuntimeError(f"Gemini returned no candidates: {data}")
-        parts = candidates[0].get("content", {}).get("parts", [])
-        text = "".join(part.get("text", "") for part in parts).strip()
-        if not text:
-            raise RuntimeError(f"Gemini returned an empty response: {data}")
-        return text
+            return run_direct(
+                "gemini",
+                prompt,
+                model,
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+                env_override={"GEMINI_API_KEY": api_key, "GEMINI_TIMEOUT": str(self.timeout)},
+            )
+        except RuntimeError as exc:
+            raise GeminiAPIError(0, str(exc)) from exc
 
 
 @dataclass
 class OpenAILLM:
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-5.6-luna"
     api_key: str | None = None
     api_key_env: str = "OPENAI_API_KEY"
     timeout: int = 60
@@ -209,21 +187,19 @@ class OpenAILLM:
             )
 
     def generate(self, prompt: str) -> str:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=self.api_key, timeout=self.timeout)
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+        return run_direct(
+            "openai",
+            prompt,
+            self.model,
             temperature=self.temperature,
-            max_tokens=self.max_output_tokens,
+            max_output_tokens=self.max_output_tokens,
+            env_override={"OPENAI_API_KEY": self.api_key or "", "OPENAI_TIMEOUT": str(self.timeout)},
         )
-        return response.choices[0].message.content or ""
 
 
 @dataclass
 class OpenRouterLLM:
-    model: str = "openai/gpt-4o-mini"
+    model: str = "openrouter/free"
     api_key: str | None = None
     api_key_env: str = "OPENROUTER_API_KEY_1"
     models: list[str] | None = None
@@ -250,23 +226,20 @@ class OpenRouterLLM:
             raise LLMConfigurationError("OpenRouter provider selected but no model was configured.")
 
     def generate(self, prompt: str) -> str:
-        from openai import OpenAI
-
-        client = OpenAI(
-            api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
-            timeout=self.timeout,
-        )
         last_error: Exception | None = None
         for model in self.models or []:
             try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
+                return run_direct(
+                    "openrouter",
+                    prompt,
+                    model,
                     temperature=self.temperature,
-                    max_tokens=self.max_output_tokens,
+                    max_output_tokens=self.max_output_tokens,
+                    env_override={
+                        "OPENROUTER_API_KEY": self.api_key or "",
+                        "OPENROUTER_TIMEOUT": str(self.timeout),
+                    },
                 )
-                return response.choices[0].message.content or ""
             except Exception as exc:
                 last_error = exc
                 time.sleep(0.2)
@@ -293,16 +266,18 @@ class DeepSeekLLM:
             )
 
     def generate(self, prompt: str) -> str:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+        return run_direct(
+            "deepseek",
+            prompt,
+            self.model,
             temperature=self.temperature,
-            max_tokens=self.max_output_tokens,
+            max_output_tokens=self.max_output_tokens,
+            env_override={
+                "DEEPSEEK_API_KEY": self.api_key or "",
+                "DEEPSEEK_BASE_URL": self.base_url,
+                "DEEPSEEK_TIMEOUT": str(self.timeout),
+            },
         )
-        return response.choices[0].message.content or ""
 
 
 def describe_llm(llm: LLMClient) -> dict[str, str]:
@@ -357,7 +332,7 @@ def create_llm(
         )
     if selected == "openai":
         return OpenAILLM(
-            model=model or os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            model=model or os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
             api_key_env=api_key_env or "OPENAI_API_KEY",
             timeout=timeout or int(os.getenv("OPENAI_TIMEOUT", "60")),
             temperature=temp,
@@ -366,7 +341,7 @@ def create_llm(
         )
     if selected == "openrouter":
         return OpenRouterLLM(
-            model=model or os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
+            model=model or os.getenv("OPENROUTER_MODEL", "openrouter/free"),
             api_key_env=api_key_env or _default_numbered_api_key_env("OPENROUTER_API_KEY"),
             timeout=timeout or int(os.getenv("OPENROUTER_TIMEOUT", "60")),
             temperature=temp,

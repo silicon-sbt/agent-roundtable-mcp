@@ -189,7 +189,6 @@ def test_local_and_proxy_transport_boundaries_cannot_be_overridden(monkeypatch):
     assert router.backend_transport("codex_proxy") == "http"
     assert router.backend_transport("antigravity") == "http"
     assert router.backend_transport("grok") == "http"
-    assert router.backend_transport("copilot") == "http"
 
     with pytest.raises(ValueError, match="本地官方 CLI"):
         resolve_transport("claude", "http")
@@ -254,18 +253,11 @@ def test_transport_adapters_fail_closed_before_any_external_call():
 def test_openai_compatible_clients_forward_max_output_tokens(monkeypatch):
     calls = []
 
-    class FakeCompletions:
-        def create(self, **kwargs):
-            calls.append(kwargs)
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
-            )
+    def fake_run_direct(provider, prompt, model, **kwargs):
+        calls.append((provider, prompt, model, kwargs))
+        return "ok"
 
-    class FakeOpenAI:
-        def __init__(self, **_kwargs):
-            self.chat = SimpleNamespace(completions=FakeCompletions())
-
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
+    monkeypatch.setattr("llm.providers_api.run_direct", fake_run_direct)
 
     clients = [
         OpenAILLM(api_key="test", max_output_tokens=111),
@@ -275,4 +267,5 @@ def test_openai_compatible_clients_forward_max_output_tokens(monkeypatch):
     for client in clients:
         assert client.generate("hello") == "ok"
 
-    assert [call["max_tokens"] for call in calls] == [111, 222, 333]
+    assert [call[0] for call in calls] == ["openai", "openrouter", "deepseek"]
+    assert [call[3]["max_output_tokens"] for call in calls] == [111, 222, 333]

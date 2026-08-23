@@ -20,7 +20,6 @@ CLI_BACKENDS = (
     "codex_proxy",
     "grok",
     "antigravity",
-    "copilot",
 )
 CLI_EFFORT_BACKENDS = CLI_BACKENDS
 CLI_EFFORT_CHOICES = {
@@ -29,7 +28,6 @@ CLI_EFFORT_CHOICES = {
     "codex_proxy": ("", "low", "medium", "high", "xhigh", "max"),
     "grok": ("", "low", "medium", "high", "xhigh", "max"),
     "antigravity": ("", "low", "medium", "high", "thinking"),
-    "copilot": ("", "none", "low", "medium", "high", "xhigh", "max"),
 }
 API_PROVIDERS = ("mock", "auto", "gemini", "openai", "openrouter", "deepseek")
 

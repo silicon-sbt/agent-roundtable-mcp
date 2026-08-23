@@ -2,8 +2,6 @@ from llm.catalog import (
     fetch_model_options,
     fallback_model_options,
     list_api_key_env_names,
-    parse_gemini_models,
-    parse_openrouter_models,
 )
 
 
@@ -44,55 +42,25 @@ def test_deepseek_model_options_use_official_models_and_ignore_openrouter_curren
         environ=environ,
     ) == [
         "deepseek-v4-flash",
+        "deepseek-v4-flash-vision-exp",
         "deepseek-v4-pro",
-        "deepseek-chat",
-        "deepseek-reasoner",
     ]
 
 
-def test_fetch_deepseek_model_options_uses_official_static_list_without_api_key():
+def test_fetch_deepseek_model_options_delegates_to_gateway(monkeypatch):
+    monkeypatch.setattr(
+        "llm.catalog.list_direct_model_ids",
+        lambda provider, **_kwargs: ["deepseek-v4-flash", "deepseek-v4-pro"],
+    )
+
     result = fetch_model_options(
         "deepseek",
         current_model="nvidia/nemotron-3-ultra-550b-a55b:free",
     )
 
-    assert result.source == "official"
+    assert result.source == "llm_gateway"
     assert result.error is None
     assert result.models[:2] == ["deepseek-v4-flash", "deepseek-v4-pro"]
-
-
-def test_parse_openrouter_models_returns_sorted_ids():
-    payload = {
-        "data": [
-            {"id": "z-model"},
-            {"id": "a-model"},
-            {"id": ""},
-            {"name": "not-an-id"},
-        ]
-    }
-
-    assert parse_openrouter_models(payload) == ["a-model", "z-model"]
-
-
-def test_parse_gemini_models_strips_models_prefix_and_filters_generation_methods():
-    payload = {
-        "models": [
-            {
-                "name": "models/gemini-2.5-flash",
-                "supportedGenerationMethods": ["generateContent"],
-            },
-            {
-                "name": "models/embedding-001",
-                "supportedGenerationMethods": ["embedContent"],
-            },
-            {
-                "name": "gemini-2.0-flash",
-                "supportedGenerationMethods": ["generateContent"],
-            },
-        ]
-    }
-
-    assert parse_gemini_models(payload) == ["gemini-2.0-flash", "gemini-2.5-flash"]
 
 
 def test_fetch_claude_models_delegates_to_shared_gateway(monkeypatch):

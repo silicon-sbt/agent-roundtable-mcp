@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -12,6 +10,7 @@ from typing import Any, Mapping
 from llm_gateway.local_claude import list_local_claude_models
 from llm_gateway.local_codex import list_local_codex_models
 from llm_gateway.proxy import list_proxy_model_ids
+from llm_gateway.catalog import list_direct_model_ids
 
 from .environment import PROJECT_ROOT, SHARED_ENV_FILE_VAR
 
@@ -23,7 +22,7 @@ except ImportError:  # pragma: no cover - dependency is declared for normal use.
 
 CATALOG_CONFIG_PATH = PROJECT_ROOT / "config" / "model_catalog.json"
 
-CLIPROXY_PROVIDERS = {"codex_proxy", "antigravity", "grok", "copilot"}
+CLIPROXY_PROVIDERS = {"codex_proxy", "antigravity", "grok"}
 
 # Built-in defaults, used when config/model_catalog.json is missing or invalid.
 _DEFAULT_PROVIDER_MODEL_ENV = {
@@ -40,12 +39,7 @@ _DEFAULT_PROVIDER_KEY_PREFIXES = {
     "deepseek": ["DEEPSEEK_API_KEY"],
 }
 
-_DEFAULT_DEEPSEEK_OFFICIAL_MODELS = [
-    "deepseek-v4-flash",
-    "deepseek-v4-pro",
-    "deepseek-chat",
-    "deepseek-reasoner",
-]
+_DEFAULT_DEEPSEEK_OFFICIAL_MODELS: list[str] = []
 
 
 def _load_catalog_config(path: Path = CATALOG_CONFIG_PATH):
@@ -67,8 +61,6 @@ def _load_catalog_config(path: Path = CATALOG_CONFIG_PATH):
                 model_env[name] = str(cfg["model_env"])
             if isinstance(cfg.get("key_prefixes"), list):
                 key_prefixes[name] = [str(item) for item in cfg["key_prefixes"]]
-            if name == "deepseek" and isinstance(cfg.get("official_models"), list):
-                deepseek_models = [str(item) for item in cfg["official_models"]]
     return model_env, key_prefixes, deepseek_models
 
 
@@ -147,6 +139,16 @@ def _split_csv(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _example_models(provider: str, root_dir: Path | str | None = None) -> list[str]:
+    path = Path(root_dir or PROJECT_ROOT) / "config" / "model_example.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        models = payload["providers"][provider]["models"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return []
+    return [str(item) for item in models if str(item).strip()]
+
+
 def fallback_model_options(
     provider: str,
     *,
@@ -156,51 +158,13 @@ def fallback_model_options(
 ) -> list[str]:
     values = _env_values(root_dir, environ)
     if provider == "deepseek":
-        options = list(DEEPSEEK_OFFICIAL_MODELS)
+        options = _example_models(provider, root_dir) or list(DEEPSEEK_OFFICIAL_MODELS)
     else:
         options = [current_model.strip()] if current_model and current_model.strip() else []
     model_env = PROVIDER_MODEL_ENV.get(provider)
     if model_env:
         options.extend(_split_csv(values.get(model_env)))
     return list(dict.fromkeys(options))
-
-
-def parse_openrouter_models(payload: Mapping[str, Any]) -> list[str]:
-    data = payload.get("data", [])
-    if not isinstance(data, list):
-        return []
-    ids = [str(item.get("id", "")).strip() for item in data if isinstance(item, dict)]
-    return sorted({model_id for model_id in ids if model_id})
-
-
-def parse_gemini_models(payload: Mapping[str, Any]) -> list[str]:
-    data = payload.get("models", [])
-    if not isinstance(data, list):
-        return []
-
-    models: set[str] = set()
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        methods = item.get("supportedGenerationMethods", [])
-        if isinstance(methods, list) and "generateContent" not in methods:
-            continue
-        name = str(item.get("name", "")).strip()
-        if name.startswith("models/"):
-            name = name.split("/", 1)[1]
-        if name:
-            models.add(name)
-    return sorted(models)
-
-
-def _parse_openai_compatible_models(payload: Mapping[str, Any]) -> list[str]:
-    return parse_openrouter_models(payload)
-
-
-def _read_json_url(url: str, *, headers: dict[str, str], timeout: int) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers=headers, method="GET")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
 
 
 def fetch_model_options(
@@ -240,54 +204,28 @@ def fetch_model_options(
             error = None if models else f"CLIProxyAPI exposed no text models owned by {provider}."
             return ModelCatalogResult(models or fallback, "cliproxy", error)
 
-        if provider == "deepseek":
-            return ModelCatalogResult(fallback, "official", None)
-
-        if provider == "openrouter":
-            headers = {"Accept": "application/json"}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            payload = _read_json_url(
-                "https://openrouter.ai/api/v1/models",
-                headers=headers,
+        if provider in {"deepseek", "openrouter", "gemini", "openai"}:
+            overrides = dict(values)
+            if api_key and api_key_env:
+                overrides[api_key_env] = api_key
+            models = list_direct_model_ids(
+                provider,
+                project_root=root_dir or PROJECT_ROOT,
+                env_override=overrides,
                 timeout=timeout,
             )
-            models = parse_openrouter_models(payload)
-            return ModelCatalogResult(models or fallback, "openrouter", None)
-
-        if provider == "gemini":
-            if not api_key:
-                return ModelCatalogResult(fallback, "env", "No Gemini API key selected.")
-            payload = _read_json_url(
-                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
-                headers={"Accept": "application/json"},
-                timeout=timeout,
-            )
-            models = parse_gemini_models(payload)
-            return ModelCatalogResult(models or fallback, "gemini", None)
-
-        if provider == "openai":
-            if not api_key:
-                return ModelCatalogResult(fallback, "env", "No OpenAI API key selected.")
-            payload = _read_json_url(
-                "https://api.openai.com/v1/models",
-                headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
-                timeout=timeout,
-            )
-            models = _parse_openai_compatible_models(payload)
-            return ModelCatalogResult(models or fallback, "openai", None)
+            return ModelCatalogResult(models or fallback, "llm_gateway", None)
 
         return ModelCatalogResult(fallback, "env", None)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, RuntimeError) as exc:
+    except (TimeoutError, json.JSONDecodeError, OSError, RuntimeError) as exc:
         source = {
             "codex": "codex_cache",
             "codex_proxy": "cliproxy",
             "antigravity": "cliproxy",
             "grok": "cliproxy",
-            "copilot": "cliproxy",
-            "deepseek": "official",
-            "openrouter": "openrouter",
-            "gemini": "gemini",
-            "openai": "openai",
+            "deepseek": "llm_gateway",
+            "openrouter": "llm_gateway",
+            "gemini": "llm_gateway",
+            "openai": "llm_gateway",
         }.get(provider, "env")
         return ModelCatalogResult(fallback, source, str(exc))

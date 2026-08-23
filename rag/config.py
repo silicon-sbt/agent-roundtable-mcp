@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from llm_gateway.direct import embed_direct
+
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
@@ -193,11 +195,11 @@ class OpenAICompatibleEmbeddingFunction:
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is required for {self.model} embeddings.")
 
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key, base_url=self.base_url)
-        response = client.embeddings.create(model=self.model, input=input)
-        return [list(item.embedding) for item in response.data]
+        provider = "openrouter" if "openrouter.ai" in (self.base_url or "") else "openai"
+        overrides = {self.api_key_env: api_key}
+        if self.base_url:
+            overrides[f"{provider.upper()}_BASE_URL"] = self.base_url
+        return embed_direct(provider, input, self.model, env_override=overrides)
 
 
 class GeminiEmbeddingFunction:
@@ -213,11 +215,14 @@ class GeminiEmbeddingFunction:
         self.api_key_env = api_key_env
 
     def __call__(self, input: list[str]) -> list[list[float]]:
-        if not os.getenv(self.api_key_env):
+        api_key = os.getenv(self.api_key_env)
+        if not api_key:
             raise RuntimeError(f"{self.api_key_env} is required for Gemini embeddings.")
-        raise NotImplementedError(
-            "Gemini embedding adapter is a placeholder. Use RAG_EMBEDDING_PROVIDER=mock "
-            "or keyword until a production Gemini embedding endpoint is configured."
+        return embed_direct(
+            "gemini",
+            input,
+            self.model,
+            env_override={"GEMINI_API_KEY": api_key},
         )
 
 
