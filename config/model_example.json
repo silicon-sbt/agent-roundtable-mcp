@@ -1,5 +1,5 @@
 {
-  "_README": "Model quick-reference. This file is not loaded by the runtime; copy full provider chains into config/agent_llms.json or the UI. Syntax: provider:model@effort. @effort is only used by CLI providers: claude, codex, grok, antigravity, copilot.",
+  "_README": "Model quick-reference and UI preset source; generation does not load it automatically. Copy full chains into config/agent_llms.json or edit them in the UI. Syntax: provider:model@effort. claude/codex use only the official local CLI; codex_proxy/antigravity/grok/copilot use only CLIProxyAPI HTTP.",
   "gemini": {
     "_说明": "Direct Gemini API. Reads GEMINI_API_KEY_1...N or GEMINI_API_KEY from .env.",
     "文本可用": [
@@ -11,7 +11,7 @@
     ]
   },
   "claude": {
-    "_说明": "Local Claude CLI subscription. Effort: low, medium, high, xhigh, max.",
+    "_说明": "Official local Claude CLI using the user's subscription login state. The shared gateway enforces text-only, no-tools, read-only execution. Effort: low, medium, high, xhigh, max.",
     "可用": [
       "claude:sonnet@high",
       "claude:sonnet@medium",
@@ -21,12 +21,26 @@
     ]
   },
   "codex": {
-    "_说明": "Local Codex CLI subscription. Model is passed to codex -m. Effort: low, medium, high, xhigh.",
+    "_说明": "Official local Codex CLI using the user's ChatGPT subscription state in an ephemeral read-only run. Live model ids come from ~/.codex/models_cache.json. Effort depends on model and can include max/ultra.",
     "可用": [
       "codex@medium",
       "codex@high",
+      "codex:gpt-5.6-sol@high",
+      "codex:gpt-5.6-terra@medium",
+      "codex:gpt-5.6-terra@high",
+      "codex:gpt-5.6-luna@medium",
       "codex:gpt-5.5@medium",
-      "codex:gpt-5.5@high"
+      "codex:gpt-5.5@high",
+      "codex:gpt-5.4@high",
+      "codex:gpt-5.4-mini@medium",
+      "codex:gpt-5.3-codex-spark@high"
+    ]
+  },
+  "codex_proxy": {
+    "_说明": "CLIProxyAPI HTTP using the free Codex account pool. This identity is deliberately separate from the user's local Codex subscription CLI.",
+    "可用": [
+      "codex_proxy:gpt-5.6-terra@medium",
+      "codex_proxy:gpt-5.6-terra@high"
     ]
   },
   "antigravity": {
@@ -35,6 +49,8 @@
       "antigravity:gemini-3.5-flash-low",
       "antigravity:gemini-3.5-flash-extra-low",
       "antigravity:gemini-3.1-pro-low",
+      "antigravity:gemini-3-flash",
+      "antigravity:gemini-3.1-flash-lite",
       "antigravity:claude-sonnet-4-6",
       "antigravity:claude-opus-4-6-thinking",
       "antigravity:gpt-oss-120b-medium"
@@ -44,7 +60,9 @@
     "_说明": "CLIProxyAPI HTTP for xAI/Grok account. Effort can be inline with @medium/@high when the proxy supports it.",
     "可用": [
       "grok:grok-4.3",
+      "grok:grok-4.5",
       "grok:grok-build-0.1@medium",
+      "grok:grok-composer-2.5-fast",
       "grok:grok-3-mini"
     ]
   },
@@ -73,7 +91,7 @@
   },
   "_整段降级链示例": {
     "balanced": "antigravity:gemini-3.1-pro-low, gemini:gemini-2.5-flash, claude:sonnet@high, openrouter:nvidia/nemotron-3-super-120b-a12b:free",
-    "deep_reasoning": "claude:sonnet@high, codex:gpt-5.5@high, gemini:gemini-2.5-pro, deepseek:deepseek-v4-pro",
+    "deep_reasoning": "claude:sonnet@high, codex:gpt-5.6-terra@high, gemini:gemini-2.5-pro, deepseek:deepseek-v4-pro",
     "fast_cheap": "antigravity:gemini-3.5-flash-low, gemini:gemini-2.5-flash-lite, openrouter:openai/gpt-oss-120b:free"
   }
 }

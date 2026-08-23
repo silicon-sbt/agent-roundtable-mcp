@@ -9,10 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - dependency is declared for normal use.
-    load_dotenv = None
+from .environment import load_project_env
 
 
 class LLMClient(Protocol):
@@ -85,8 +82,7 @@ class MockLLM:
 
 
 def _load_environment() -> None:
-    if load_dotenv is not None:
-        load_dotenv()
+    load_project_env()
 
 
 def collect_numbered_keys(prefix: str) -> list[str]:
@@ -201,6 +197,7 @@ class OpenAILLM:
     api_key_env: str = "OPENAI_API_KEY"
     timeout: int = 60
     temperature: float = 0.7
+    max_output_tokens: int = 4096
     provider_name: str = "openai"
 
     def __post_init__(self) -> None:
@@ -219,6 +216,7 @@ class OpenAILLM:
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
+            max_tokens=self.max_output_tokens,
         )
         return response.choices[0].message.content or ""
 
@@ -231,6 +229,7 @@ class OpenRouterLLM:
     models: list[str] | None = None
     timeout: int = 60
     temperature: float = 0.7
+    max_output_tokens: int = 4096
     provider_name: str = "openrouter"
 
     def __post_init__(self) -> None:
@@ -265,6 +264,7 @@ class OpenRouterLLM:
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=self.temperature,
+                    max_tokens=self.max_output_tokens,
                 )
                 return response.choices[0].message.content or ""
             except Exception as exc:
@@ -281,6 +281,7 @@ class DeepSeekLLM:
     base_url: str = "https://api.deepseek.com"
     timeout: int = 60
     temperature: float = 0.7
+    max_output_tokens: int = 4096
     provider_name: str = "deepseek"
 
     def __post_init__(self) -> None:
@@ -299,6 +300,7 @@ class DeepSeekLLM:
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
+            max_tokens=self.max_output_tokens,
         )
         return response.choices[0].message.content or ""
 
@@ -359,6 +361,8 @@ def create_llm(
             api_key_env=api_key_env or "OPENAI_API_KEY",
             timeout=timeout or int(os.getenv("OPENAI_TIMEOUT", "60")),
             temperature=temp,
+            max_output_tokens=max_output_tokens
+            or int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "4096")),
         )
     if selected == "openrouter":
         return OpenRouterLLM(
@@ -366,6 +370,8 @@ def create_llm(
             api_key_env=api_key_env or _default_numbered_api_key_env("OPENROUTER_API_KEY"),
             timeout=timeout or int(os.getenv("OPENROUTER_TIMEOUT", "60")),
             temperature=temp,
+            max_output_tokens=max_output_tokens
+            or int(os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", "4096")),
         )
     if selected == "deepseek":
         return DeepSeekLLM(
@@ -374,5 +380,7 @@ def create_llm(
             base_url=base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             timeout=timeout or int(os.getenv("DEEPSEEK_TIMEOUT", "60")),
             temperature=temp,
+            max_output_tokens=max_output_tokens
+            or int(os.getenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "4096")),
         )
     raise ValueError(f"Unsupported provider: {provider}")

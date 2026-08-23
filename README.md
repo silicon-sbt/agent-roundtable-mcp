@@ -32,12 +32,17 @@
 
 ## 3 分钟快速开始
 
-先安装依赖：
+使用 Python 3.10+，建议在独立虚拟环境中安装依赖：
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
 ```
+
+`requirements.txt` 通过 `-e ../llm_gateway` 复用同级的共享传输项目；本地目录需保持
+`agent_roundtable/` 与 `llm_gateway/` 为兄弟目录。LLM 身份与传输规则只在后者维护。
 
 没有 API key，也可以先跑一个模拟版本：
 
@@ -89,6 +94,8 @@ UI 里的 `Mock mode` 默认关闭。
 
 真实 API key 放在 `.env` 文件里。不要把真实 key 写到 JSON、YAML、README、日志或截图里。
 
+如果多个本地工作流共用一套私密 LLM 配置，可以只在本项目 `.env` 中设置 `LLM_SHARED_ENV_FILE=~/.config/llm/shared.env`。本项目已有的同名变量优先，共享文件只补齐缺项，因此不需要复制密钥；这个路径不会写进公开配置。
+
 OpenRouter 推荐这样命名：
 
 ```env
@@ -125,7 +132,7 @@ DeepSeek 使用 OpenAI 兼容接口，`base_url` 是 `https://api.deepseek.com`�
 - `deepseek-chat`：兼容旧名，DeepSeek 文档说明将于北京时间 2026-07-24 23:59 弃用。
 - `deepseek-reasoner`：兼容旧名，DeepSeek 文档说明将于北京时间 2026-07-24 23:59 弃用。
 
-Claude / Codex 可以走本机 CLI 登录态；Grok / Antigravity / Copilot 可以走本机 CLIProxyAPI HTTP 服务。模型链语法见 `config/model_example.json`：
+`claude` / `codex` 固定通过官方本地 CLI 复用用户自己的订阅登录态；`codex_proxy` / `grok` / `antigravity` / `copilot` 固定走本机 CLIProxyAPI HTTP。两类身份不能通过 `.env` 互相覆盖。模型链语法见 `config/model_example.json`：
 
 ```text
 provider:model@effort
@@ -134,14 +141,14 @@ provider:model@effort
 例如：
 
 ```text
-claude:sonnet@high, codex:gpt-5.5@medium, gemini:gemini-2.5-flash
+claude:sonnet@high, codex:gpt-5.6-terra@medium, codex_proxy:gpt-5.6-terra@medium
 ```
 
-`@effort` 只对 CLI 类 provider 生效，Gemini / OpenRouter / DeepSeek 会忽略它。
+`@effort` 会传给支持推理档位的订阅 / CLIProxy provider；Gemini / OpenAI / OpenRouter / DeepSeek 直连会忽略它。共享 `llm_gateway` 会把 Claude / Codex CLI 调用限制为纯文本、无工具、只读和非交互执行，并拒绝把它们改走 HTTP 或 SDK。
 
 ### 可选依赖：CLIProxyAPI
 
-`antigravity` / `grok` / `copilot` 这几类 provider-chain 条目，需要在本机另外运行 **CLIProxyAPI** 才能调用。它是一个独立的开源代理服务，把你本地登录的 CLI 账号（Antigravity、Grok、Copilot 等）统一暴露成 OpenAI/Gemini/Claude 兼容的 HTTP 接口。
+`codex_proxy` / `antigravity` / `grok` / `copilot` 这几类 provider-chain 条目，需要在本机另外运行 **CLIProxyAPI** 才能调用。它是一个独立的开源代理服务，把免费 Codex 账号及其他代理账号统一暴露成 OpenAI-compatible HTTP 接口；`codex_proxy` 特意与用户自己的 `codex` 订阅 CLI 分开命名。
 
 - 项目地址：<https://github.com/router-for-me/CLIProxyAPI>
 - 按它的说明启动后，默认监听 `http://127.0.0.1:8317`。
@@ -153,7 +160,7 @@ CLI_PROXY_API_KEY=local        # 与 CLIProxyAPI 配置里的 api-keys 对应
 CLI_PROXY_TIMEOUT=600
 ```
 
-如果你不用 `antigravity` / `grok` / `copilot` 这几条链，就**不需要** CLIProxyAPI —— 直连 API（Gemini/OpenAI/OpenRouter/DeepSeek）和本机 Claude/Codex CLI 都不依赖它。
+如果你不用 `codex_proxy` / `antigravity` / `grok` / `copilot` 这些链，就**不需要** CLIProxyAPI —— 直连 API（Gemini/OpenAI/OpenRouter/DeepSeek）和 Claude/Codex 官方本地 CLI 都不依赖它。
 
 ## 每个 Agent 用什么模型
 
@@ -176,7 +183,7 @@ config/agent_llms.json
       "max_output_tokens": 4096
     },
     "computing": {
-      "provider_chain": "codex:gpt-5.5@high, antigravity:gemini-3.5-flash-low, gemini:gemini-3.5-flash",
+      "provider_chain": "codex:gpt-5.6-terra@high, antigravity:gemini-3.5-flash-low, gemini:gemini-3.5-flash",
       "temperature": 0.25,
       "max_output_tokens": 4096
     }
@@ -226,9 +233,10 @@ agent_roundtable/
 │   ├── facade.py            # generate_text / provider-chain 门面
 │   ├── router.py            # provider-chain 路由与传输选择
 │   ├── providers_api.py     # 各 API 直连客户端
-│   ├── transport_cli.py     # 本地 CLI 子进程调用
-│   ├── transport_http.py    # CLIProxyAPI HTTP 调用
-│   └── catalog.py           # 模型清单 / provider 元数据
+│   ├── environment.py       # 项目根目录与 .env 隔离加载
+│   ├── transport_cli.py     # llm_gateway 本地 Claude/Codex CLI 薄适配层
+│   ├── transport_http.py    # llm_gateway CLIProxyAPI HTTP 薄适配层
+│   └── catalog.py           # 静态回退 + 动态模型发现
 ├── config/                  # 全部声明式配置
 │   ├── domain_experts/      # 主线专家：接 experts 语料
 │   ├── persona_inspired/    # 人物风格启发：纯风格或 people 语料
@@ -591,7 +599,7 @@ UI 现在直接编辑 provider-chain。常用模型链来自 `config/model_examp
 常见原因：
 
 - API key 没填。
-- provider-chain 写错，或对应 `.env` key / 本机 CLI / CLIProxyAPI 没准备好。
+- provider-chain 写错，或对应 `.env` key / 本机官方 CLI 登录态 / CLIProxyAPI 没准备好。
 - 模型名不可用。
 - provider 限流或网络失败。
 - 免费模型暂时不可用。

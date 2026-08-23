@@ -3,6 +3,8 @@ langchain>=0.2
 langchain-text-splitters>=0.2
 chromadb>=0.5
 openai>=1.0
+# Shared local Claude/Codex CLI and CLIProxyAPI transport.
+-e ../llm_gateway
 PyYAML>=6.0
 python-dotenv>=1.0
 pytest>=8.0

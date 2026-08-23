@@ -1,5 +1,5 @@
 {
-  "description": "Committed per-agent provider-chain routing. Store real API keys and CLI tokens in .env; this file only names callable model chains and generation tuning.",
+  "description": "Committed per-agent provider-chain routing. Store direct API keys in .env; Claude/Codex subscription credentials remain in their official local CLI login stores. This file only names callable model chains and generation tuning.",
   "agents": {
     "macroeconomics": {
       "provider_chain": "antigravity:gemini-3.1-pro-low, gemini:gemini-2.5-flash, claude:sonnet@high, openrouter:nvidia/nemotron-3-super-120b-a12b:free",
@@ -7,12 +7,12 @@
       "max_output_tokens": 4096
     },
     "investing": {
-      "provider_chain": "antigravity:gemini-3.5-flash-low, gemini:gemini-2.5-flash, claude:sonnet@high, antigravity:claude-sonnet-4-6, gemini:gemini-2.5-flash, openrouter:nvidia/nemotron-3-super-120b-a12b:free",
+      "provider_chain": "antigravity:gemini-3.5-flash-low, gemini:gemini-2.5-flash, claude:sonnet@high, antigravity:claude-sonnet-4-6, openrouter:nvidia/nemotron-3-super-120b-a12b:free",
       "temperature": 0.3,
       "max_output_tokens": 4096
     },
     "computing": {
-      "provider_chain": "antigravity:gemini-3.5-flash-low, gemini:gemini-3.5-flash, codex:gpt-5.5@high, openrouter:nvidia/nemotron-3-ultra-550b-a55b:free",
+      "provider_chain": "antigravity:gemini-3.5-flash-low, gemini:gemini-3.5-flash, codex:gpt-5.6-terra@high, openrouter:nvidia/nemotron-3-ultra-550b-a55b:free",
       "temperature": 0.25,
       "max_output_tokens": 4096
     },

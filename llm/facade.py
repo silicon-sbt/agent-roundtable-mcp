@@ -23,7 +23,16 @@ def generate_text(
     prompt: str,
     validate: Callable[[str], Any] | None = None,
 ) -> tuple[str, str]:
-    return router.run_provider_chain(
+    result = generate_text_detailed(request, prompt, validate)
+    return result.text, result.provider
+
+
+def generate_text_detailed(
+    request: TextGenerationRequest,
+    prompt: str,
+    validate: Callable[[str], Any] | None = None,
+) -> router.ProviderChainResult:
+    return router.run_provider_chain_detailed(
         prompt,
         request.provider_chain,
         workflow=request.workflow,
@@ -43,10 +52,10 @@ class ProviderChainLLM:
         self.model = request.provider_chain
 
     def generate(self, prompt: str) -> str:
-        text, provider = generate_text(self.request, prompt)
-        self.provider_name = provider
-        self.model = router.model_for_provider(self.request.provider_chain, provider)
-        return text
+        result = generate_text_detailed(self.request, prompt)
+        self.provider_name = result.provider
+        self.model = result.model
+        return result.text
 
 
 def _tuple(value: Any) -> tuple[str, ...]:

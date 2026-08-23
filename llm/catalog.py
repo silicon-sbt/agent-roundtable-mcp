@@ -9,13 +9,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from llm_gateway.local_claude import list_local_claude_models
+from llm_gateway.local_codex import list_local_codex_models
+from llm_gateway.proxy import list_proxy_model_ids
+
+from .environment import PROJECT_ROOT, SHARED_ENV_FILE_VAR
+
 try:
     from dotenv import dotenv_values
 except ImportError:  # pragma: no cover - dependency is declared for normal use.
     dotenv_values = None
 
 
-CATALOG_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "model_catalog.json"
+CATALOG_CONFIG_PATH = PROJECT_ROOT / "config" / "model_catalog.json"
+
+CLIPROXY_PROVIDERS = {"codex_proxy", "antigravity", "grok", "copilot"}
 
 # Built-in defaults, used when config/model_catalog.json is missing or invalid.
 _DEFAULT_PROVIDER_MODEL_ENV = {
@@ -82,15 +90,26 @@ def _env_values(
         return {key: value for key, value in environ.items() if value}
 
     values: dict[str, str] = {}
-    env_path = Path(root_dir or ".") / ".env"
-    if dotenv_values is not None and env_path.exists():
-        values.update(
-            {
-                str(key): str(value)
-                for key, value in dotenv_values(env_path).items()
-                if value
-            }
-        )
+    env_path = Path(root_dir or PROJECT_ROOT) / ".env"
+    if dotenv_values is not None:
+        if env_path.exists():
+            values.update(
+                {
+                    str(key): str(value)
+                    for key, value in dotenv_values(env_path).items()
+                    if value
+                }
+            )
+        shared_path = str(
+            os.environ.get(SHARED_ENV_FILE_VAR)
+            or values.get(SHARED_ENV_FILE_VAR)
+            or ""
+        ).strip()
+        if shared_path:
+            shared_values = dotenv_values(Path(shared_path).expanduser())
+            for key, value in shared_values.items():
+                if value:
+                    values.setdefault(str(key), str(value))
     values.update({key: value for key, value in os.environ.items() if value})
     return values
 
@@ -197,6 +216,30 @@ def fetch_model_options(
     api_key = values.get(api_key_env or "") if api_key_env else None
 
     try:
+        if provider == "claude":
+            models = list_local_claude_models()
+            return ModelCatalogResult(
+                list(dict.fromkeys(models + fallback)),
+                "claude_aliases",
+                None,
+            )
+
+        if provider == "codex":
+            models = list_local_codex_models(env_override=values)
+            error = None if models else "Codex model cache has no visible models."
+            return ModelCatalogResult(models or fallback, "codex_cache", error)
+
+        if provider in CLIPROXY_PROVIDERS:
+            proxy_environment = dict(values)
+            proxy_environment["CLI_PROXY_TIMEOUT"] = str(timeout)
+            models = list_proxy_model_ids(
+                provider,
+                project_root=root_dir or PROJECT_ROOT,
+                env_override=proxy_environment,
+            )
+            error = None if models else f"CLIProxyAPI exposed no text models owned by {provider}."
+            return ModelCatalogResult(models or fallback, "cliproxy", error)
+
         if provider == "deepseek":
             return ModelCatalogResult(fallback, "official", None)
 
@@ -235,5 +278,16 @@ def fetch_model_options(
             return ModelCatalogResult(models or fallback, "openai", None)
 
         return ModelCatalogResult(fallback, "env", None)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
-        return ModelCatalogResult(fallback, "env", str(exc))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, RuntimeError) as exc:
+        source = {
+            "codex": "codex_cache",
+            "codex_proxy": "cliproxy",
+            "antigravity": "cliproxy",
+            "grok": "cliproxy",
+            "copilot": "cliproxy",
+            "deepseek": "official",
+            "openrouter": "openrouter",
+            "gemini": "gemini",
+            "openai": "openai",
+        }.get(provider, "env")
+        return ModelCatalogResult(fallback, source, str(exc))

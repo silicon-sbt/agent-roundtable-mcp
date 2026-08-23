@@ -32,12 +32,17 @@ The project currently includes three built-in councils:
 
 ## 3-Minute Quick Start
 
-Install dependencies:
+Use Python 3.10+ and install dependencies in an isolated virtual environment:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
 ```
+
+`requirements.txt` reuses the sibling transport project through `-e ../llm_gateway`.
+Keep `agent_roundtable/` and `llm_gateway/` as sibling directories locally; LLM identity and transport rules are maintained only in the latter.
 
 Run a no-key mock demo:
 
@@ -88,6 +93,8 @@ In the UI you can:
 
 Put real API keys in `.env`. Do not write real keys into JSON, YAML, README, logs, or screenshots.
 
+To reuse one private LLM configuration across local workflows, set `LLM_SHARED_ENV_FILE=~/.config/llm/shared.env` in this project's `.env`. Project-local values take precedence and the shared file only fills missing settings, so credentials do not need to be copied or exposed in public config.
+
 OpenRouter example:
 
 ```env
@@ -123,7 +130,7 @@ DeepSeek uses an OpenAI-compatible API with `base_url=https://api.deepseek.com`.
 - `deepseek-v4-pro`
 - `deepseek-chat` and `deepseek-reasoner` are legacy names scheduled for deprecation by DeepSeek on 2026-07-24 23:59 Beijing time.
 
-Claude / Codex can use local CLI login state. Grok / Antigravity / Copilot can use a local CLIProxyAPI HTTP service. Chain syntax is documented in `config/model_example.json`:
+`claude` / `codex` always use the official local CLIs and the user's own subscription login state. `codex_proxy` / `grok` / `antigravity` / `copilot` always use local CLIProxyAPI HTTP. Environment variables cannot swap the two identity classes. Chain syntax is documented in `config/model_example.json`:
 
 ```text
 provider:model@effort
@@ -132,14 +139,14 @@ provider:model@effort
 Example:
 
 ```text
-claude:sonnet@high, codex:gpt-5.5@medium, gemini:gemini-2.5-flash
+claude:sonnet@high, codex:gpt-5.6-terra@medium, codex_proxy:gpt-5.6-terra@medium
 ```
 
-`@effort` only applies to CLI providers. Gemini / OpenRouter / DeepSeek ignore it.
+`@effort` is forwarded to subscription / CLIProxy providers that support reasoning levels. Direct Gemini / OpenAI / OpenRouter / DeepSeek calls ignore it. Shared `llm_gateway` constrains Claude and Codex CLI calls to text-only, no-tools, read-only, non-interactive execution and rejects attempts to switch either identity to HTTP or an SDK.
 
 ### Optional: CLIProxyAPI
 
-Provider-chain entries for `antigravity` / `grok` / `copilot` require a separate **CLIProxyAPI** service running locally. It is an independent open-source proxy that exposes your locally logged-in CLI accounts (Antigravity, Grok, Copilot, etc.) as OpenAI/Gemini/Claude-compatible HTTP endpoints.
+Provider-chain entries for `codex_proxy` / `antigravity` / `grok` / `copilot` require a separate **CLIProxyAPI** service running locally. It exposes free Codex accounts and other proxy accounts through an OpenAI-compatible HTTP endpoint; `codex_proxy` is deliberately distinct from the user's own `codex` subscription CLI.
 
 - Project: <https://github.com/router-for-me/CLIProxyAPI>
 - After starting it, the default listen address is `http://127.0.0.1:8317`.
@@ -151,7 +158,7 @@ CLI_PROXY_API_KEY=local        # must match an entry in CLIProxyAPI's api-keys
 CLI_PROXY_TIMEOUT=600
 ```
 
-If you do not use the `antigravity` / `grok` / `copilot` chains, CLIProxyAPI is **not** required — direct APIs (Gemini/OpenAI/OpenRouter/DeepSeek) and the local Claude/Codex CLIs do not depend on it.
+If you do not use the `codex_proxy` / `antigravity` / `grok` / `copilot` chains, CLIProxyAPI is **not** required — direct APIs (Gemini/OpenAI/OpenRouter/DeepSeek) and the official local Claude/Codex CLIs do not depend on it.
 
 ## Per-Agent Model Config
 
@@ -174,7 +181,7 @@ Example:
       "max_output_tokens": 4096
     },
     "computing": {
-      "provider_chain": "codex:gpt-5.5@high, antigravity:gemini-3.5-flash-low, gemini:gemini-3.5-flash",
+      "provider_chain": "codex:gpt-5.6-terra@high, antigravity:gemini-3.5-flash-low, gemini:gemini-3.5-flash",
       "temperature": 0.25,
       "max_output_tokens": 4096
     }
@@ -221,6 +228,10 @@ agent_roundtable/
 │   ├── prompts.py           # Prompt templates
 │   └── state.py             # Runtime data structures
 ├── llm/                     # Model layer
+│   ├── environment.py       # Project-root .env loading and child env isolation
+│   ├── transport_cli.py     # Thin adapter to llm_gateway local Claude/Codex CLIs
+│   ├── transport_http.py    # Thin adapter to llm_gateway CLIProxyAPI HTTP
+│   └── catalog.py           # Stable fallbacks plus live model discovery
 ├── config/
 │   ├── domain_experts/      # Mainline experts: experts corpora
 │   ├── persona_inspired/    # Persona agents: style-only or people corpora

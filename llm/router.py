@@ -1,70 +1,62 @@
 from __future__ import annotations
 
-import os
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
+
+from llm_gateway.routing import (
+    canonical_backend,
+    normalize_effort,
+    resolve_transport,
+)
 
 from . import transport_cli, transport_http
 from .providers_api import MockLLM, create_llm
 from .transport_http import antigravity_model_variant
 
 
-CLI_BACKENDS = ("claude", "codex", "grok", "antigravity", "copilot")
+CLI_BACKENDS = (
+    "claude",
+    "codex",
+    "codex_proxy",
+    "grok",
+    "antigravity",
+    "copilot",
+)
 CLI_EFFORT_BACKENDS = CLI_BACKENDS
 CLI_EFFORT_CHOICES = {
     "claude": ("", "low", "medium", "high", "xhigh", "max"),
-    "codex": ("", "low", "medium", "high", "xhigh"),
+    "codex": ("", "low", "medium", "high", "xhigh", "max", "ultra"),
+    "codex_proxy": ("", "low", "medium", "high", "xhigh", "max"),
     "grok": ("", "low", "medium", "high", "xhigh", "max"),
     "antigravity": ("", "low", "medium", "high", "thinking"),
     "copilot": ("", "none", "low", "medium", "high", "xhigh", "max"),
 }
 API_PROVIDERS = ("mock", "auto", "gemini", "openai", "openrouter", "deepseek")
-_DEFAULT_TRANSPORTS = {
-    "claude": "subprocess",
-    "codex": "subprocess",
-    "grok": "http",
-    "antigravity": "http",
-    "copilot": "http",
-}
+
+
+@dataclass(frozen=True)
+class ProviderChainResult:
+    text: str
+    provider: str
+    model: str
 
 
 def _alias(value: str) -> str:
-    v = (value or "").strip().lower()
-    if v in ("claude", "claude_cli", "claude-cli", "anthropic"):
-        return "claude"
-    if v in ("codex", "codex_cli", "codex-cli", "chatgpt", "openai_cli"):
-        return "codex"
-    if v in ("grok", "grok_cli", "grok-cli", "xai"):
-        return "grok"
-    if v in ("antigravity", "antigravity_cli", "antigravity-cli", "agy"):
-        return "antigravity"
-    if v in ("copilot", "copilot_cli", "copilot-cli", "github_copilot", "github-copilot"):
-        return "copilot"
-    return v or "auto"
+    token = (value or "").strip().lower()
+    normalized = canonical_backend(token)
+    if normalized == "default" and token:
+        # Fail closed for ambiguous tokens such as codex_sdk / claude_http,
+        # while preserving unrelated direct-API provider names.
+        resolve_transport(token)
+    return (token or "auto") if normalized == "default" else normalized
 
 
 def _normalize_effort(value: str) -> str:
-    effort = (value or "").strip().lower()
-    if effort in ("middle", "mid"):
-        return "medium"
-    return effort
-
-
-def _normalize_transport(value: str) -> str:
-    v = (value or "").strip().lower()
-    if v in ("subprocess", "cli", "local"):
-        return "subprocess"
-    if v in ("http", "cliproxy", "cliproxyapi"):
-        return "http"
-    return ""
+    return normalize_effort(value)
 
 
 def backend_transport(backend: str) -> str:
-    normalized = _alias(backend)
-    for env in (f"{normalized.upper()}_TRANSPORT", "CLI_TRANSPORT", "AGY_TRANSPORT"):
-        transport = _normalize_transport(os.environ.get(env, ""))
-        if transport:
-            return transport
-    return _DEFAULT_TRANSPORTS.get(normalized, "http")
+    return resolve_transport(backend)
 
 
 def supports_effort(backend: str) -> bool:
@@ -80,7 +72,8 @@ def run_cli(
     env_override: Optional[dict[str, str]] = None,
 ) -> str:
     normalized = _alias(backend)
-    if backend_transport(normalized) == "subprocess":
+    transport = backend_transport(normalized)
+    if transport == "subprocess":
         return transport_cli.run_cli(normalized, text, model, effort, env_override=env_override)
     return transport_http.run_cli(normalized, text, model, effort, env_override=env_override)
 
@@ -97,11 +90,11 @@ def parse_provider_chain(provider_string: str, *, default: str = "gemini") -> li
         if not segment:
             continue
         provider, _, model = segment.partition(":")
-        provider = _alias(provider.strip())
-        if not model and "@" in provider:
-            provider, _, effort = provider.partition("@")
-            provider = _alias(provider.strip())
+        raw_provider = provider.strip()
+        if not model and "@" in raw_provider:
+            raw_provider, _, effort = raw_provider.partition("@")
             model = f"@{effort.strip()}"
+        provider = _alias(raw_provider)
         chain.append((provider, model.strip()))
     return chain or [(_alias(default), "")]
 
@@ -166,6 +159,28 @@ def run_provider_chain(
     validate: Optional[Callable[[str], Any]] = None,
     **call_kwargs: Any,
 ) -> tuple[str, str]:
+    result = run_provider_chain_detailed(
+        instruction,
+        provider_string,
+        workflow=workflow,
+        skip=skip,
+        label=label,
+        validate=validate,
+        **call_kwargs,
+    )
+    return result.text, result.provider
+
+
+def run_provider_chain_detailed(
+    instruction: str,
+    provider_string: str,
+    *,
+    workflow: str,
+    skip: tuple[str, ...] = (),
+    label: str = "",
+    validate: Optional[Callable[[str], Any]] = None,
+    **call_kwargs: Any,
+) -> ProviderChainResult:
     errors: list[str] = []
     tag = label or workflow
     skip_set = {_alias(item) for item in skip}
@@ -182,7 +197,14 @@ def run_provider_chain(
             )
             if validate is not None:
                 validate(result)
-            return result, provider
+            chosen, _effort = split_model_effort(
+                model or str(call_kwargs.get("fallback_model", ""))
+            )
+            return ProviderChainResult(
+                text=result,
+                provider=provider,
+                model=chosen or "default",
+            )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{provider}: {exc}")
             print(f"  [{tag}] provider={provider} failed, trying next provider... ({exc})", flush=True)
