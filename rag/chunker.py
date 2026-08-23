@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -102,7 +103,7 @@ def _heading_index(text: str) -> list[tuple[int, int, str]]:
 
 def _chapter_for_chunk(
     *,
-    full_text: str,
+    headings: list[tuple[int, int, str]],
     chunk_text: str,
     start_index: int,
     title: str,
@@ -111,13 +112,15 @@ def _chapter_for_chunk(
     if chunk_heading and len(chunk_heading.group(1)) >= 2:
         return chunk_heading.group(2).strip()
 
-    chapter = title
-    for heading_start, level, heading_title in _heading_index(full_text):
-        if heading_start > start_index:
-            break
+    # ``headings`` is computed once per document.  The previous implementation
+    # rescanned the entire book for every chunk, which made large Markdown books
+    # effectively O(document_size * chunk_count).
+    position = bisect_right(headings, start_index, key=lambda heading: heading[0])
+    for index in range(position - 1, -1, -1):
+        _heading_start, level, heading_title = headings[index]
         if level >= 2:
-            chapter = heading_title
-    return chapter
+            return heading_title
+    return title
 
 
 def _fallback_split_text(
@@ -196,6 +199,7 @@ def chunk_markdown_file(
     corpus_dir = paths.corpus_knowledge_dir(corpus)
     text = clean_markdown_text(path.read_text(encoding="utf-8", errors="ignore"))
     title = _extract_title(text, path.stem.replace("_", " ").title())
+    headings = _heading_index(text)
     source_file = _source_file(path, root)
 
     metadata_base: dict[str, Any] = {
@@ -220,7 +224,7 @@ def chunk_markdown_file(
                 metadata={
                     **metadata_base,
                     "chapter": _chapter_for_chunk(
-                        full_text=text,
+                        headings=headings,
                         chunk_text=chunk_text,
                         start_index=start_index,
                         title=title,

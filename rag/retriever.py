@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from rag.chunker import RagChunk, chunk_corpus_markdown
+from rag.chunker import RagChunk, SUPPORTED_MARKDOWN_SUFFIXES, chunk_corpus_markdown
 from rag.config import (
     CHROMA_COLLECTION_NAME,
     DEFAULT_TOP_K,
@@ -21,22 +23,15 @@ from rag.config import (
 Backend = Literal["auto", "chroma", "keyword"]
 
 
-def _load_keyword_chunks(
-    corpus_id: str,
-    *,
-    knowledge_scope: KnowledgeScope,
-    root_dir: Path | str,
-) -> list[RagChunk]:
-    corpus = resolve_corpus(corpus_id, knowledge_scope=knowledge_scope)
-    paths = resolve_paths(root_dir)
-    index_path = paths.corpus_vector_dir(corpus) / KEYWORD_INDEX_FILE
-    if not index_path.exists():
-        return chunk_corpus_markdown(
-            corpus_id,
-            knowledge_scope=knowledge_scope,
-            root_dir=paths.root_dir,
-        )
-
+@lru_cache(maxsize=32)
+def _read_keyword_index_cached(
+    index_path_text: str,
+    mtime_ns: int,
+    size: int,
+) -> tuple[RagChunk, ...]:
+    """Parse an immutable snapshot of a generated JSONL index once per process."""
+    del mtime_ns, size  # Values are cache-key material; the path is the data source.
+    index_path = Path(index_path_text)
     chunks: list[RagChunk] = []
     for line in index_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -48,7 +43,73 @@ def _load_keyword_chunks(
                 metadata=dict(item.get("metadata", {})),
             )
         )
-    return chunks
+    return tuple(chunks)
+
+
+def _corpus_source_signature(corpus_dir: Path) -> str:
+    fingerprint = hashlib.sha256()
+    if not corpus_dir.exists():
+        return fingerprint.hexdigest()
+    for path in sorted(corpus_dir.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_MARKDOWN_SUFFIXES:
+            continue
+        stat = path.stat()
+        fingerprint.update(str(path.relative_to(corpus_dir)).encode("utf-8"))
+        fingerprint.update(f"\0{stat.st_mtime_ns}\0{stat.st_size}\n".encode("ascii"))
+    return fingerprint.hexdigest()
+
+
+@lru_cache(maxsize=16)
+def _chunk_corpus_cached(
+    corpus_id: str,
+    knowledge_scope: KnowledgeScope,
+    root_dir_text: str,
+    source_signature: str,
+) -> tuple[RagChunk, ...]:
+    del source_signature  # Source metadata is part of the cache key.
+    return tuple(
+        chunk_corpus_markdown(
+            corpus_id,
+            knowledge_scope=knowledge_scope,
+            root_dir=root_dir_text,
+        )
+    )
+
+
+def clear_retriever_cache() -> None:
+    """Clear process-local index snapshots after an explicit maintenance action."""
+    _read_keyword_index_cached.cache_clear()
+    _chunk_corpus_cached.cache_clear()
+
+
+def _load_keyword_chunks(
+    corpus_id: str,
+    *,
+    knowledge_scope: KnowledgeScope,
+    root_dir: Path | str,
+) -> list[RagChunk]:
+    corpus = resolve_corpus(corpus_id, knowledge_scope=knowledge_scope)
+    paths = resolve_paths(root_dir)
+    index_path = paths.corpus_vector_dir(corpus) / KEYWORD_INDEX_FILE
+    if not index_path.exists():
+        corpus_dir = paths.corpus_knowledge_dir(corpus)
+        return list(
+            _chunk_corpus_cached(
+                corpus_id,
+                knowledge_scope,
+                str(paths.root_dir),
+                _corpus_source_signature(corpus_dir),
+            )
+        )
+
+    stat = index_path.stat()
+    return list(
+        _read_keyword_index_cached(
+            str(index_path.resolve()),
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+    )
 
 
 def _source_kind_weight(chunk: RagChunk) -> float:

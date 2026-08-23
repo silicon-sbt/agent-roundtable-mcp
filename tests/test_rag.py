@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
+from rag import chunker as chunker_module
 from rag.chunker import chunk_corpus_markdown, chunk_expert_markdown
-from rag.ingest import ingest_corpus, ingest_expert
+from rag.ingest import ingest_corpus, ingest_expert, prune_obsolete_indexes
 from rag.retriever import get_retriever
 
 
@@ -78,7 +80,13 @@ def test_keyword_mock_retriever_works_without_embedding_api_key(tmp_path: Path, 
 
     assert stats["chunks_indexed"] >= 1
     assert stats["backend"] == "keyword"
-    assert (tmp_path / "vector_db" / "chroma" / "experts__investing" / "chunks.jsonl").exists()
+    persist_dir = tmp_path / "vector_db" / "chroma" / "experts__investing"
+    assert (persist_dir / "chunks.jsonl").exists()
+    manifest = json.loads((persist_dir / "index_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 1
+    assert manifest["corpus_id"] == "investing"
+    assert manifest["backend"] == "keyword"
+    assert manifest["chunks_indexed"] == stats["chunks_indexed"]
     assert results
     assert results[0].metadata["source_file"] == "knowledge/experts/investing/buffett/moat.md"
     assert "pricing power" in results[0].page_content
@@ -168,3 +176,48 @@ def test_chunker_strips_doc2md_image_and_html_noise(tmp_path: Path):
     assert "cover.jpg" not in text
     assert "<svg" not in text
     assert "imitation game" in text
+
+
+def test_chunker_builds_heading_index_once_per_document(tmp_path: Path, monkeypatch):
+    source = tmp_path / "knowledge" / "experts" / "computing" / "long.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "# Long Book\n\n## First\n\n"
+        + ("A long section about systems and computation. " * 300)
+        + "\n\n## Second\n\n"
+        + ("A second long section about verification. " * 300),
+        encoding="utf-8",
+    )
+    original = chunker_module._heading_index
+    calls = 0
+
+    def counting_heading_index(text: str):
+        nonlocal calls
+        calls += 1
+        return original(text)
+
+    monkeypatch.setattr(chunker_module, "_heading_index", counting_heading_index)
+
+    chunks = chunk_expert_markdown("computing", root_dir=tmp_path)
+
+    assert len(chunks) > 10
+    assert calls == 1
+
+
+def test_prune_obsolete_indexes_keeps_only_discovered_corpora(tmp_path: Path):
+    (tmp_path / "knowledge" / "experts" / "history").mkdir(parents=True)
+    vector_root = tmp_path / "vector_db" / "chroma"
+    expected = vector_root / "experts__history"
+    obsolete = vector_root / "history_strategist"
+    unknown = vector_root / "manually_managed"
+    expected.mkdir(parents=True)
+    obsolete.mkdir()
+    unknown.mkdir()
+    (obsolete / "chunks.jsonl").write_text("generated", encoding="utf-8")
+
+    removed = prune_obsolete_indexes(tmp_path)
+
+    assert removed == ["history_strategist"]
+    assert expected.exists()
+    assert not obsolete.exists()
+    assert unknown.exists()

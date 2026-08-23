@@ -12,17 +12,17 @@ ALLOWED_LLM_CONFIG_KEYS = {
     "fallback_model",
     "temperature",
     "max_output_tokens",
+    "gemini_rotation_strategy",
+    "max_attempts",
+    "retry_backoff_seconds",
     "skip",
     "label",
     "provider",
     "model",
-    "api_key_env",
-    "base_url",
-    "timeout",
 }
 DEFAULT_DESCRIPTION = (
     "Committed per-agent LLM routing. Store real API keys in .env; "
-    "this file only names provider, model, and api_key_env."
+    "this file only names provider chains and generation tuning."
 )
 
 
@@ -50,9 +50,9 @@ def _sanitize_agent_configs(agents: dict[str, Any], path: Path) -> dict[str, dic
         for key, value in config.items():
             if value is None or value == "":
                 continue
-            if key in {"temperature"}:
+            if key in {"temperature", "retry_backoff_seconds"}:
                 sanitized[key] = float(value)
-            elif key in {"timeout", "max_output_tokens"}:
+            elif key in {"max_attempts", "max_output_tokens"}:
                 sanitized[key] = int(value)
             elif key == "skip":
                 if isinstance(value, str):

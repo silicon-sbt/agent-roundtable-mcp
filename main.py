@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from roundtable.graph import run_roundtable
-from llm import CLI_BACKENDS, create_llm, create_llm_from_config
+from llm import API_PROVIDERS, CLI_BACKENDS, create_llm, create_llm_from_config
 
 
 def parse_args() -> argparse.Namespace:
@@ -14,18 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         default="auto",
-        choices=[
-            "auto",
-            "mock",
-            "gemini",
-            "openai",
-            "openrouter",
-            "deepseek",
-            "claude",
-            "codex",
-            "grok",
-            "antigravity",
-        ],
+        choices=list(dict.fromkeys((*API_PROVIDERS, *CLI_BACKENDS))),
         help="LLM provider. auto uses persona/council config or falls back to mock.",
     )
     parser.add_argument("--model", default=None, help="Provider model override")

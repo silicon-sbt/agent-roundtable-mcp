@@ -4,6 +4,8 @@ import argparse
 import hashlib
 import json
 import shutil
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,14 +13,37 @@ from rag.chunker import RagChunk, chunk_corpus_markdown
 from rag.config import (
     CHROMA_COLLECTION_NAME,
     DEFAULT_EMBEDDING_PROVIDER,
+    INDEX_MANIFEST_FILE,
+    INDEX_SCHEMA_VERSION,
     KEYWORD_INDEX_FILE,
-    KnowledgeScope,
     CorpusRef,
+    KnowledgeScope,
     create_embedding_function,
     discover_corpora,
     resolve_corpus,
     resolve_paths,
 )
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    """Replace a generated index artifact without exposing a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(text)
+            temp_path = Path(handle.name)
+        temp_path.replace(path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
 
 
 def _chunk_id(chunk: RagChunk) -> str:
@@ -64,7 +89,43 @@ def _write_keyword_index(chunks: list[RagChunk], persist_dir: Path) -> None:
     persist_dir.mkdir(parents=True, exist_ok=True)
     index_path = persist_dir / KEYWORD_INDEX_FILE
     lines = [json.dumps(_serialize_chunk(chunk), ensure_ascii=False) for chunk in chunks]
-    index_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    _write_text_atomic(index_path, "\n".join(lines) + ("\n" if lines else ""))
+
+
+def _write_index_manifest(
+    *,
+    corpus: CorpusRef,
+    chunks: list[RagChunk],
+    persist_dir: Path,
+    requested_embedding_provider: str,
+    backend: str,
+) -> Path:
+    source_files = sorted(
+        {
+            str(chunk.metadata.get("source_file", ""))
+            for chunk in chunks
+            if chunk.metadata.get("source_file")
+        }
+    )
+    fingerprint = hashlib.sha256()
+    for chunk in chunks:
+        fingerprint.update(_chunk_id(chunk).encode("ascii"))
+        fingerprint.update(b"\n")
+    path = persist_dir / INDEX_MANIFEST_FILE
+    payload = {
+        "schema_version": INDEX_SCHEMA_VERSION,
+        "corpus_id": corpus.corpus_id,
+        "knowledge_scope": corpus.knowledge_scope,
+        "backend": backend,
+        "requested_embedding_provider": requested_embedding_provider,
+        "chunks_indexed": len(chunks),
+        "files_indexed": len(source_files),
+        "source_files": source_files,
+        "content_fingerprint": fingerprint.hexdigest(),
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    _write_text_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return path
 
 
 def _write_chroma(
@@ -98,7 +159,7 @@ def _write_chroma(
         embedding_function=embedding_function,
         metadata={"hnsw:space": "cosine"},
     )
-    collection.add(
+    collection.upsert(
         ids=[_chunk_id(chunk) for chunk in chunks],
         documents=[chunk.page_content for chunk in chunks],
         metadatas=[dict(chunk.metadata) for chunk in chunks],
@@ -111,13 +172,30 @@ def _merge_chunks(
     existing: list[RagChunk],
     incoming: list[RagChunk],
     source_kinds: set[str] | None,
+    preserve_existing: bool,
 ) -> list[RagChunk]:
-    if not source_kinds:
+    if source_kinds:
+        retained = [
+            chunk
+            for chunk in existing
+            if str(chunk.metadata.get("source_kind", "")) not in source_kinds
+        ]
+        return retained + incoming
+    if not preserve_existing:
         return incoming
+
+    # ``--no-reset`` keeps sources that are not part of the current crawl, but
+    # replaces every old chunk belonging to a source that was freshly parsed.
+    # Matching by content hash would retain both the old and edited versions.
+    incoming_sources = {
+        str(chunk.metadata.get("source_file", ""))
+        for chunk in incoming
+        if chunk.metadata.get("source_file")
+    }
     retained = [
         chunk
         for chunk in existing
-        if str(chunk.metadata.get("source_kind", "")) not in source_kinds
+        if str(chunk.metadata.get("source_file", "")) not in incoming_sources
     ]
     return retained + incoming
 
@@ -146,9 +224,17 @@ def ingest_corpus(
         root_dir=paths.root_dir,
         source_kinds=source_kinds,
     )
-    chunks = _merge_chunks(existing=existing_chunks, incoming=new_chunks, source_kinds=source_kinds)
+    chunks = _merge_chunks(
+        existing=existing_chunks,
+        incoming=new_chunks,
+        source_kinds=source_kinds,
+        preserve_existing=not reset,
+    )
 
-    if persist_dir.exists() and (merge_mode or (reset and existing_chunks)):
+    # ``chunks`` is now the complete desired snapshot, including retained
+    # sources for incremental ingests. Recreate generated storage so edited
+    # chunks cannot leave stale Chroma ids or files from a previous backend.
+    if persist_dir.exists():
         shutil.rmtree(persist_dir)
     _write_keyword_index(chunks, persist_dir)
 
@@ -159,8 +245,17 @@ def ingest_corpus(
             chunks=chunks,
             persist_dir=persist_dir,
             embedding_provider=provider,
-            reset=True,
+            reset=reset or merge_mode,
         )
+
+    backend = "chroma" if chroma_written else "keyword"
+    manifest_path = _write_index_manifest(
+        corpus=corpus,
+        chunks=chunks,
+        persist_dir=persist_dir,
+        requested_embedding_provider=provider,
+        backend=backend,
+    )
 
     return {
         "corpus_id": corpus_id,
@@ -169,8 +264,10 @@ def ingest_corpus(
         "files_indexed": len({chunk.metadata.get("source_file") for chunk in chunks}),
         "chunks_indexed": len(chunks),
         "persist_dir": str(persist_dir),
-        "backend": "chroma" if chroma_written else "keyword",
+        "backend": backend,
         "embedding_provider": provider,
+        "index_schema_version": INDEX_SCHEMA_VERSION,
+        "manifest_path": str(manifest_path),
         "source_kinds": sorted(source_kinds) if source_kinds else [],
         "merge_mode": merge_mode,
     }
@@ -210,6 +307,29 @@ def ingest_person(
     )
 
 
+def prune_obsolete_indexes(root_dir: Path | str = ".") -> list[str]:
+    """Delete generated corpus directories that no configured knowledge corpus can use."""
+    paths = resolve_paths(root_dir)
+    expected = {corpus.vector_key for corpus in discover_corpora(paths.root_dir)}
+    if not expected or not paths.vector_db_dir.exists():
+        return []
+
+    removed: list[str] = []
+    for path in sorted(paths.vector_db_dir.iterdir()):
+        if not path.is_dir() or path.name in expected:
+            continue
+        generated_markers = (
+            path / KEYWORD_INDEX_FILE,
+            path / INDEX_MANIFEST_FILE,
+            path / "chroma.sqlite3",
+        )
+        if not any(marker.exists() for marker in generated_markers):
+            continue
+        shutil.rmtree(path)
+        removed.append(path.name)
+    return removed
+
+
 def _parse_corpus_target(value: str) -> CorpusRef:
     if "/" in value:
         scope_name, corpus_id = value.split("/", 1)
@@ -242,6 +362,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Embedding backend. keyword skips embeddings; mock uses deterministic local vectors.",
     )
     parser.add_argument("--no-reset", action="store_true", help="Keep existing vector DB contents.")
+    parser.add_argument(
+        "--prune-obsolete",
+        action="store_true",
+        help="Remove generated index directories whose corpus ids no longer exist.",
+    )
     return parser.parse_args(argv)
 
 
@@ -282,6 +407,13 @@ def main(argv: list[str] | None = None) -> None:
             f"{stats['knowledge_scope']}/{stats['corpus_id']}: indexed {stats['files_indexed']} files, "
             f"{stats['chunks_indexed']} chunks -> {stats['persist_dir']} "
             f"({stats['backend']}, provider={stats['embedding_provider']}{kinds_note}{merge_note})"
+        )
+
+    if args.prune_obsolete:
+        removed = prune_obsolete_indexes(args.root_dir)
+        print(
+            "Pruned obsolete index directories: "
+            + (", ".join(removed) if removed else "none")
         )
 
 

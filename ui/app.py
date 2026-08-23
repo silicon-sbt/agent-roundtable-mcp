@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,10 +23,10 @@ from llm import (  # noqa: E402
     CLI_EFFORT_CHOICES,
     MockLLM,
 )
-from llm.catalog import (  # noqa: E402
-    fallback_model_options,
-    fetch_model_options,
-    list_api_key_env_names,
+from llm_gateway import (  # noqa: E402
+    example_model_ids,
+    list_provider_model_ids,
+    read_model_example,
 )
 from roundtable.loader import load_council_personas  # noqa: E402
 
@@ -72,26 +71,41 @@ def _select_index(options: list[str], value: str | None) -> int:
     return 0
 
 
-def _flatten_provider_chain_presets(value: Any) -> list[str]:
-    presets: list[str] = []
-    if isinstance(value, str) and ":" in value:
-        presets.append(value)
-    elif isinstance(value, list):
-        for item in value:
-            presets.extend(_flatten_provider_chain_presets(item))
-    elif isinstance(value, dict):
-        for item in value.values():
-            presets.extend(_flatten_provider_chain_presets(item))
-    return presets
+MODEL_EXAMPLE_PATH = PROJECT_ROOT / "config" / "model_example.json"
+
+
+@st.cache_data(show_spinner=False)
+def _model_example() -> dict[str, Any]:
+    return read_model_example(MODEL_EXAMPLE_PATH)
+
+
+def _route_fragment(route: Any) -> str:
+    if not isinstance(route, dict):
+        return ""
+    provider = str(route.get("provider") or "").strip()
+    model = str(route.get("model") or "").strip()
+    effort = str(route.get("effort") or "").strip()
+    if not provider:
+        return ""
+    fragment = f"{provider}:{model}" if model else provider
+    return f"{fragment}@{effort}" if effort else fragment
 
 
 @st.cache_data(show_spinner=False)
 def _provider_chain_presets() -> list[str]:
-    path = PROJECT_ROOT / "config" / "model_example.json"
-    if not path.exists():
+    payload = _model_example()
+    examples = payload.get("_copy_paste_chains")
+    if not isinstance(examples, dict):
         return []
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return list(dict.fromkeys(_flatten_provider_chain_presets(data)))
+    presets: list[str] = []
+    for routes in examples.values():
+        if not isinstance(routes, list):
+            continue
+        fragments = [_route_fragment(route) for route in routes]
+        chain = ", ".join(fragment for fragment in fragments if fragment)
+        if chain:
+            presets.append(chain)
+    return list(dict.fromkeys(presets))
 
 
 PICKER_API_PROVIDERS = [p for p in API_PROVIDERS if p not in ("mock", "auto")]
@@ -100,28 +114,23 @@ PICKER_PROVIDERS = PICKER_API_PROVIDERS + list(CLI_BACKENDS)
 
 @st.cache_data(show_spinner=False)
 def _curated_models_by_provider() -> dict[str, list[str]]:
-    """Hardcoded default model lists, parsed per provider from model_example.json."""
-    path = PROJECT_ROOT / "config" / "model_example.json"
-    if not path.exists():
-        return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    out: dict[str, list[str]] = {}
-    if isinstance(data, dict):
-        for provider, section in data.items():
-            models: list[str] = []
-            for fragment in _flatten_provider_chain_presets(section):
-                prov, _, model = fragment.partition(":")
-                if prov == provider and model:
-                    models.append(model)
-            if models:
-                out[provider] = list(dict.fromkeys(models))
-    return out
+    """Offline picker data from the gateway-generated structured example."""
+
+    payload = _model_example()
+    return {
+        provider: example_model_ids(payload, provider)
+        for provider in PICKER_PROVIDERS
+        if example_model_ids(payload, provider)
+    }
 
 
 @st.cache_data(show_spinner="Fetching models...", ttl=300)
-def _live_models(provider: str, api_key_env: str | None) -> tuple[list[str], str, str | None]:
-    result = fetch_model_options(provider, api_key_env=api_key_env, root_dir=str(PROJECT_ROOT))
-    return result.models, result.source, result.error
+def _live_models(provider: str) -> tuple[list[str], str, str | None]:
+    try:
+        models = list_provider_model_ids(provider, project_root=PROJECT_ROOT)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return [], "llm_gateway", f"{type(exc).__name__}: {exc}"
+    return models, "llm_gateway", None
 
 
 def _model_options(provider: str, live: bool) -> tuple[list[str], str]:
@@ -129,13 +138,10 @@ def _model_options(provider: str, live: bool) -> tuple[list[str], str]:
     curated = _curated_models_by_provider().get(provider, [])
     options = list(curated)
     note = "default (model_example.json)"
-    if live and provider in PICKER_API_PROVIDERS:
-        key_names = list_api_key_env_names(provider, root_dir=PROJECT_ROOT)
-        api_key_env = key_names[0] if key_names else None
-        models, source, error = _live_models(provider, api_key_env)
+    if live:
+        models, source, error = _live_models(provider)
         options = list(dict.fromkeys(models + curated))
         note = f"live: {source}" + (f" — {error}" if error else "")
-    options = list(dict.fromkeys(options + fallback_model_options(provider, root_dir=PROJECT_ROOT)))
     return options, note
 
 
@@ -304,8 +310,8 @@ with st.sidebar:
         value=False,
         help=(
             "On: query each provider's /models endpoint using .env keys to populate the "
-            "Model dropdowns. Off: use the hardcoded defaults from model_example.json / "
-            "model_catalog.json. The Provider chain text box is always editable either way."
+            "Model dropdowns. Off: use the generated config/model_example.json snapshot. "
+            "The Provider chain text box is always editable either way."
         ),
     )
     st.caption("Real LLM calls use provider chains in config/agent_llms.json and keys in .env.")
@@ -318,7 +324,7 @@ metric_cols[1].metric("Agents", len(personas))
 metric_cols[2].metric("Mode", "Mock" if use_mock else "Real LLM")
 
 st.subheader("Agent LLM Routing")
-st.caption("Use provider:model@effort chains. Direct API providers read .env keys; Claude/Codex use local CLI; Grok/Antigravity/Copilot use CLIProxyAPI HTTP.")
+st.caption("Use provider:model@effort chains. Direct API providers read .env keys; Claude/Codex use official local CLIs; Codex Proxy/Grok/Antigravity use CLIProxyAPI HTTP.")
 
 updates: dict[str, dict[str, str]] = {}
 for persona in personas:

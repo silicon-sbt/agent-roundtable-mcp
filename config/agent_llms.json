@@ -17,7 +17,7 @@
       "max_output_tokens": 4096
     },
     "philosophy": {
-      "provider_chain": "antigravity:gemini-3.5-flash-low, gemini:gemini-2.5-pro, claude:sonnet@medium, openrouter:poolside/laguna-m.1:free",
+      "provider_chain": "antigravity:gemini-3.5-flash-low, gemini:gemini-2.5-pro, claude:sonnet@medium, openrouter:nvidia/nemotron-3-super-120b-a12b:free",
       "temperature": 0.4,
       "max_output_tokens": 4096
     },
@@ -32,12 +32,12 @@
       "max_output_tokens": 4096
     },
     "munger": {
-      "provider_chain": "gemini:gemini-2.5-flash, gemini:gemini-2.5-pro, claude:sonnet@high, openrouter:poolside/laguna-m.1:free",
+      "provider_chain": "gemini:gemini-2.5-flash, gemini:gemini-2.5-pro, claude:sonnet@high, openrouter:nvidia/nemotron-3-super-120b-a12b:free",
       "temperature": 0.35,
       "max_output_tokens": 4096
     },
     "dalio": {
-      "provider_chain": "antigravity:gemini-3.1-pro-low, gemini:gemini-2.5-flash, openrouter:openai/gpt-oss-120b:free",
+      "provider_chain": "antigravity:gemini-3.1-pro-low, gemini:gemini-2.5-flash, openrouter:nvidia/nemotron-3-nano-30b-a3b:free",
       "temperature": 0.35,
       "max_output_tokens": 4096
     },

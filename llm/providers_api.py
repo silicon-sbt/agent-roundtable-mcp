@@ -1,30 +1,24 @@
+"""Roundtable-owned LLM object protocol and deterministic mock.
+
+Provider transports, credentials, model normalization and retries belong to
+``llm_gateway``. This module keeps only the object contract required by the
+roundtable graph plus its offline demo implementation.
+"""
+
 from __future__ import annotations
 
-import os
 import re
-import time
 from dataclasses import dataclass
 from typing import Protocol
 
-from llm_gateway.direct import run_direct
-
-from .environment import load_project_env
-
 
 class LLMClient(Protocol):
-    def generate(self, prompt: str) -> str:
-        """Generate text from a prompt."""
+    """Minimal object contract consumed by roundtable nodes."""
 
+    provider_name: str
+    model: str
 
-class LLMConfigurationError(RuntimeError):
-    """Raised when a provider is selected without required configuration."""
-
-
-class GeminiAPIError(RuntimeError):
-    def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(f"Gemini HTTP {status_code}: {detail}")
-        self.status_code = status_code
-        self.detail = detail
+    def generate(self, prompt: str) -> str: ...
 
 
 def _extract(prompt: str, label: str) -> str:
@@ -80,282 +74,13 @@ class MockLLM:
         )
 
 
-def _load_environment() -> None:
-    load_project_env()
-
-
-def collect_numbered_keys(prefix: str) -> list[str]:
-    direct_key = os.getenv(prefix)
-    numbered: list[tuple[int, str]] = []
-    pattern = re.compile(rf"^{re.escape(prefix)}_(\d+)$")
-    for name, value in os.environ.items():
-        match = pattern.match(name)
-        if match and value:
-            numbered.append((int(match.group(1)), value))
-
-    keys = [value for _, value in sorted(numbered)]
-    if direct_key:
-        keys.insert(0, direct_key)
-    return keys
-
-
-def _split_csv(value: str) -> list[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _default_numbered_api_key_env(prefix: str) -> str:
-    numbered: list[tuple[int, str]] = []
-    pattern = re.compile(rf"^{re.escape(prefix)}_(\d+)$")
-    for name, value in os.environ.items():
-        match = pattern.match(name)
-        if match and value:
-            numbered.append((int(match.group(1)), name))
-    if numbered:
-        return min(numbered)[1]
-    return prefix
-
-
-@dataclass
-class GeminiLLM:
-    model: str = "gemini-2.5-flash"
-    api_keys: list[str] | None = None
-    models: list[str] | None = None
-    temperature: float = 0.7
-    max_output_tokens: int = 4096
-    timeout: int = 60
-    provider_name: str = "gemini"
-
-    def __post_init__(self) -> None:
-        _load_environment()
-        if self.api_keys is None:
-            self.api_keys = collect_numbered_keys("GEMINI_API_KEY")
-        if not self.api_keys:
-            raise LLMConfigurationError(
-                "Gemini provider selected but no GEMINI_API_KEY or GEMINI_API_KEY_N was found."
-            )
-        if self.models is None:
-            self.models = _split_csv(self.model)
-        if not self.models:
-            raise LLMConfigurationError("Gemini provider selected but no model was configured.")
-
-    def generate(self, prompt: str) -> str:
-        last_error: Exception | None = None
-        for model in self.models or []:
-            for api_key in self.api_keys or []:
-                try:
-                    return self._generate_with_key(prompt, api_key, model)
-                except GeminiAPIError as exc:
-                    last_error = exc
-                    if exc.status_code in {400, 404, 503}:
-                        break
-                    time.sleep(0.2)
-                except Exception as exc:  # Try the next free key/model before giving up.
-                    last_error = exc
-                    time.sleep(0.2)
-        raise RuntimeError(f"Gemini request failed for all configured keys: {last_error}") from last_error
-
-    def _generate_with_key(self, prompt: str, api_key: str, model: str) -> str:
-        try:
-            return run_direct(
-                "gemini",
-                prompt,
-                model,
-                temperature=self.temperature,
-                max_output_tokens=self.max_output_tokens,
-                env_override={"GEMINI_API_KEY": api_key, "GEMINI_TIMEOUT": str(self.timeout)},
-            )
-        except RuntimeError as exc:
-            raise GeminiAPIError(0, str(exc)) from exc
-
-
-@dataclass
-class OpenAILLM:
-    model: str = "gpt-5.6-luna"
-    api_key: str | None = None
-    api_key_env: str = "OPENAI_API_KEY"
-    timeout: int = 60
-    temperature: float = 0.7
-    max_output_tokens: int = 4096
-    provider_name: str = "openai"
-
-    def __post_init__(self) -> None:
-        _load_environment()
-        self.api_key = self.api_key or os.getenv(self.api_key_env)
-        if not self.api_key:
-            raise LLMConfigurationError(
-                f"OpenAI provider selected but {self.api_key_env} was not found."
-            )
-
-    def generate(self, prompt: str) -> str:
-        return run_direct(
-            "openai",
-            prompt,
-            self.model,
-            temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
-            env_override={"OPENAI_API_KEY": self.api_key or "", "OPENAI_TIMEOUT": str(self.timeout)},
-        )
-
-
-@dataclass
-class OpenRouterLLM:
-    model: str = "openrouter/free"
-    api_key: str | None = None
-    api_key_env: str = "OPENROUTER_API_KEY_1"
-    models: list[str] | None = None
-    timeout: int = 60
-    temperature: float = 0.7
-    max_output_tokens: int = 4096
-    provider_name: str = "openrouter"
-
-    def __post_init__(self) -> None:
-        _load_environment()
-        self.api_key = self.api_key or os.getenv(self.api_key_env)
-        if not self.api_key and self.api_key_env == "OPENROUTER_API_KEY_1":
-            legacy_key = os.getenv("OPENROUTER_API_KEY")
-            if legacy_key:
-                self.api_key = legacy_key
-                self.api_key_env = "OPENROUTER_API_KEY"
-        if not self.api_key:
-            raise LLMConfigurationError(
-                f"OpenRouter provider selected but {self.api_key_env} was not found."
-            )
-        if self.models is None:
-            self.models = _split_csv(self.model)
-        if not self.models:
-            raise LLMConfigurationError("OpenRouter provider selected but no model was configured.")
-
-    def generate(self, prompt: str) -> str:
-        last_error: Exception | None = None
-        for model in self.models or []:
-            try:
-                return run_direct(
-                    "openrouter",
-                    prompt,
-                    model,
-                    temperature=self.temperature,
-                    max_output_tokens=self.max_output_tokens,
-                    env_override={
-                        "OPENROUTER_API_KEY": self.api_key or "",
-                        "OPENROUTER_TIMEOUT": str(self.timeout),
-                    },
-                )
-            except Exception as exc:
-                last_error = exc
-                time.sleep(0.2)
-        raise RuntimeError(f"OpenRouter request failed for all configured models: {last_error}") from last_error
-
-
-@dataclass
-class DeepSeekLLM:
-    model: str = "deepseek-v4-flash"
-    api_key: str | None = None
-    api_key_env: str = "DEEPSEEK_API_KEY"
-    base_url: str = "https://api.deepseek.com"
-    timeout: int = 60
-    temperature: float = 0.7
-    max_output_tokens: int = 4096
-    provider_name: str = "deepseek"
-
-    def __post_init__(self) -> None:
-        _load_environment()
-        self.api_key = self.api_key or os.getenv(self.api_key_env)
-        if not self.api_key:
-            raise LLMConfigurationError(
-                f"DeepSeek provider selected but {self.api_key_env} was not found."
-            )
-
-    def generate(self, prompt: str) -> str:
-        return run_direct(
-            "deepseek",
-            prompt,
-            self.model,
-            temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
-            env_override={
-                "DEEPSEEK_API_KEY": self.api_key or "",
-                "DEEPSEEK_BASE_URL": self.base_url,
-                "DEEPSEEK_TIMEOUT": str(self.timeout),
-            },
-        )
-
-
 def describe_llm(llm: LLMClient) -> dict[str, str]:
-    provider = str(getattr(llm, "provider_name", llm.__class__.__name__))
-    models = getattr(llm, "models", None)
-    if models:
-        model = ",".join(str(item) for item in models)
-    else:
-        model = str(getattr(llm, "model", "unknown"))
-    return {"provider": provider, "model": model}
+    """Return the effective identity/model exposed by a roundtable LLM object."""
+
+    return {
+        "provider": str(getattr(llm, "provider_name", llm.__class__.__name__)),
+        "model": str(getattr(llm, "model", "unknown")),
+    }
 
 
-def _configured_api_key(api_key_env: str | None) -> str | None:
-    return os.getenv(api_key_env) if api_key_env else None
-
-
-def create_llm(
-    provider: str = "auto",
-    model: str | None = None,
-    *,
-    api_key_env: str | None = None,
-    base_url: str | None = None,
-    timeout: int | None = None,
-    temperature: float | None = None,
-    max_output_tokens: int | None = None,
-) -> LLMClient:
-    _load_environment()
-    selected = provider.lower()
-    temp = 0.7 if temperature is None else temperature
-    if selected == "mock":
-        return MockLLM(model=model or "mock")
-    if selected == "auto":
-        if collect_numbered_keys("GEMINI_API_KEY"):
-            selected = "gemini"
-        elif os.getenv("OPENAI_API_KEY"):
-            selected = "openai"
-        elif collect_numbered_keys("OPENROUTER_API_KEY"):
-            selected = "openrouter"
-        else:
-            return MockLLM()
-
-    if selected == "gemini":
-        gemini_model = model or os.getenv("GEMINI_MODEL") or os.getenv("GEMINI_MODEL_NAME")
-        gemini_api_keys = [_configured_api_key(api_key_env)] if api_key_env else None
-        return GeminiLLM(
-            model=gemini_model or "gemini-2.5-flash",
-            api_keys=[key for key in gemini_api_keys if key] if gemini_api_keys else None,
-            temperature=temp,
-            max_output_tokens=max_output_tokens
-            or int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "4096")),
-            timeout=timeout or int(os.getenv("GEMINI_TIMEOUT", "60")),
-        )
-    if selected == "openai":
-        return OpenAILLM(
-            model=model or os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
-            api_key_env=api_key_env or "OPENAI_API_KEY",
-            timeout=timeout or int(os.getenv("OPENAI_TIMEOUT", "60")),
-            temperature=temp,
-            max_output_tokens=max_output_tokens
-            or int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "4096")),
-        )
-    if selected == "openrouter":
-        return OpenRouterLLM(
-            model=model or os.getenv("OPENROUTER_MODEL", "openrouter/free"),
-            api_key_env=api_key_env or _default_numbered_api_key_env("OPENROUTER_API_KEY"),
-            timeout=timeout or int(os.getenv("OPENROUTER_TIMEOUT", "60")),
-            temperature=temp,
-            max_output_tokens=max_output_tokens
-            or int(os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", "4096")),
-        )
-    if selected == "deepseek":
-        return DeepSeekLLM(
-            model=model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-            api_key_env=api_key_env or "DEEPSEEK_API_KEY",
-            base_url=base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            timeout=timeout or int(os.getenv("DEEPSEEK_TIMEOUT", "60")),
-            temperature=temp,
-            max_output_tokens=max_output_tokens
-            or int(os.getenv("DEEPSEEK_MAX_OUTPUT_TOKENS", "4096")),
-        )
-    raise ValueError(f"Unsupported provider: {provider}")
+__all__ = ["LLMClient", "MockLLM", "describe_llm"]

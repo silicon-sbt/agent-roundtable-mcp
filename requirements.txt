@@ -5,6 +5,5 @@ chromadb>=0.5
 # Shared local CLI, CLIProxyAPI, direct API, embeddings, and model discovery.
 -e ../llm_gateway
 PyYAML>=6.0
-python-dotenv>=1.0
 pytest>=8.0
 streamlit>=1.36

@@ -1,64 +1,33 @@
+"""Roundtable-specific adapters over the standalone ``llm_gateway`` package."""
+
 from __future__ import annotations
 
-from .facade import ProviderChainLLM, TextGenerationRequest, create_llm_from_config, generate_text
-from .providers_api import (
-    DeepSeekLLM,
-    GeminiAPIError,
-    GeminiLLM,
-    LLMClient,
-    LLMConfigurationError,
-    MockLLM,
-    OpenAILLM,
-    OpenRouterLLM,
-    collect_numbered_keys,
+from .facade import (
+    ProviderChainLLM,
+    TextGenerationRequest,
     create_llm,
-    describe_llm,
+    create_llm_from_config,
+    generate_text,
 )
+from .providers_api import LLMClient, MockLLM, describe_llm
 from .router import (
     API_PROVIDERS,
+    AUTO_PROVIDER_CHAIN,
     CLI_BACKENDS,
-    CLI_EFFORT_BACKENDS,
     CLI_EFFORT_CHOICES,
-    antigravity_model_variant,
-    backend_transport,
-    call_provider,
-    cli_text,
-    model_for_provider,
-    parse_provider_chain,
-    run_cli,
-    run_provider_chain,
-    split_model_effort,
-    supports_effort,
 )
 
 __all__ = [
     "API_PROVIDERS",
+    "AUTO_PROVIDER_CHAIN",
     "CLI_BACKENDS",
-    "CLI_EFFORT_BACKENDS",
     "CLI_EFFORT_CHOICES",
-    "DeepSeekLLM",
-    "GeminiAPIError",
-    "GeminiLLM",
     "LLMClient",
-    "LLMConfigurationError",
     "MockLLM",
-    "OpenAILLM",
-    "OpenRouterLLM",
     "ProviderChainLLM",
     "TextGenerationRequest",
-    "antigravity_model_variant",
-    "backend_transport",
-    "call_provider",
-    "cli_text",
-    "collect_numbered_keys",
     "create_llm",
     "create_llm_from_config",
     "describe_llm",
     "generate_text",
-    "model_for_provider",
-    "parse_provider_chain",
-    "run_cli",
-    "run_provider_chain",
-    "split_model_effort",
-    "supports_effort",
 ]

@@ -5,7 +5,7 @@ import yaml
 
 from roundtable.graph import run_roundtable
 from roundtable.loader import load_persona
-from llm import MockLLM, OpenRouterLLM, create_llm
+from llm import MockLLM
 
 
 def test_graph_runs_two_rounds_and_generates_final_summary(tmp_path: Path):
@@ -24,28 +24,6 @@ def test_graph_runs_two_rounds_and_generates_final_summary(tmp_path: Path):
     assert any(message.get("type") == "agent" for message in result["messages"])
     assert result["log_path"]
     assert Path(result["log_path"]).exists()
-
-
-def test_openrouter_llm_accepts_comma_separated_model_candidates(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("OPENROUTER_MODEL", "model-a:free, model-b:free")
-
-    llm = create_llm(provider="openrouter")
-
-    assert isinstance(llm, OpenRouterLLM)
-    assert llm.models == ["model-a:free", "model-b:free"]
-
-
-def test_openrouter_llm_uses_numbered_api_key_by_default(monkeypatch):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.setenv("OPENROUTER_API_KEY_1", "test-key-1")
-    monkeypatch.setenv("OPENROUTER_MODEL", "model-a:free")
-
-    llm = create_llm(provider="openrouter")
-
-    assert isinstance(llm, OpenRouterLLM)
-    assert llm.api_key_env == "OPENROUTER_API_KEY_1"
-    assert llm.api_key == "test-key-1"
 
 
 def test_persona_llm_config_is_logged_per_agent(tmp_path: Path):

@@ -41,8 +41,8 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-`requirements.txt` 通过 `-e ../llm_gateway` 复用同级的共享传输项目；本地目录需保持
-`agent_roundtable/` 与 `llm_gateway/` 为兄弟目录。LLM 身份与传输规则只在后者维护。
+`requirements.txt` 通过 `-e ../llm_gateway` 复用同级的共享 LLM 网关；本地目录需保持
+`agent_roundtable/` 与 `llm_gateway/` 为兄弟目录。身份、传输、模型发现与降级链执行只在后者维护。
 
 没有 API key，也可以先跑一个模拟版本：
 
@@ -94,14 +94,11 @@ UI 里的 `Mock mode` 默认关闭。
 
 真实 API key 放在 `.env` 文件里。不要把真实 key 写到 JSON、YAML、README、日志或截图里。
 
-如果多个本地工作流共用一套私密 LLM 配置，可以只在本项目 `.env` 中设置 `LLM_SHARED_ENV_FILE=~/.config/llm/shared.env`。本项目已有的同名变量优先，共享文件只补齐缺项，因此不需要复制密钥；这个路径不会写进公开配置。
-
 OpenRouter 推荐这样命名：
 
 ```env
 OPENROUTER_API_KEY_1=你的第一个_key
 OPENROUTER_API_KEY_2=你的第二个_key
-OPENROUTER_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free,poolside/laguna-m.1:free,nvidia/nemotron-3-super-120b-a12b:free,openai/gpt-oss-120b:free
 OPENROUTER_TIMEOUT=60
 ```
 
@@ -110,26 +107,18 @@ Gemini 可以这样配置：
 ```env
 GEMINI_API_KEY_1=你的第一个_key
 GEMINI_API_KEY_2=你的第二个_key
-GEMINI_MODEL=gemini-2.5-flash-lite
-GEMINI_MAX_OUTPUT_TOKENS=4096
 ```
 
 OpenAI 和 DeepSeek 也预留了配置：
 
 ```env
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.6-luna
 
 DEEPSEEK_API_KEY=
-DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 ```
 
-DeepSeek 使用 OpenAI 兼容接口，`base_url` 是 `https://api.deepseek.com`。UI 不会去请求 DeepSeek 的模型列表接口，而是内置官方模型名：
-
-- `deepseek-v4-flash`
-- `deepseek-v4-pro`
-- DeepSeek 模型不手写兼容旧名；以 `config/model_example.json` 最近一次实时目录为准。
+DeepSeek 使用 OpenAI 兼容接口，`base_url` 是 `https://api.deepseek.com`。UI 的实时目录和离线回退都由 `llm_gateway` 提供；项目内不再维护模型名或 key 名清单。
 
 `claude` / `codex` 固定通过官方本地 CLI 复用用户自己的订阅登录态；`codex_proxy` / `grok` / `antigravity` 固定走本机 CLIProxyAPI HTTP。两类身份不能通过 `.env` 互相覆盖。Copilot 与 Ollama Cloud 已移除。模型链语法见 `config/model_example.json`：
 
@@ -188,7 +177,7 @@ config/agent_llms.json
 }
 ```
 
-真实 key 仍然只从 `.env` 读取。`config/model_example.json` 是速查清单，不会被运行时自动加载。
+真实 key 仍然只从 `.env` 读取。`config/model_example.json` 是 `llm-gateway refresh-example` 生成的完整速查清单，UI 关闭实时模型时只读使用它；项目不手工维护其中的模型列表。
 
 如果你用 UI 修改模型，UI 会自动写回这个 JSON。
 
@@ -199,7 +188,7 @@ config/agent_llms.json
 1. 命令行 `--mock`、`--provider` 或 `--provider-chain`：临时覆盖所有 Agent。
 2. `config/agent_llms.json`：每个 Agent 的集中模型配置。
 3. Agent YAML 里的 `llm` 字段：后备配置。
-4. `.env` 中的默认模型：比如 `OPENROUTER_MODEL`、`GEMINI_MODEL`。
+4. 路由没有写 model 时，使用 `llm_gateway` 的 provider 默认值。
 5. 如果没有可用 key，`auto` 会退回本地 mock。
 
 普通使用建议：
@@ -226,21 +215,16 @@ agent_roundtable/
 │   ├── logger.py            # 保存 Markdown 报告
 │   ├── prompts.py           # 提示词模板
 │   └── state.py             # 圆桌运行时的数据结构
-├── llm/                     # 模型层：怎么调模型
-│   ├── facade.py            # generate_text / provider-chain 门面
-│   ├── router.py            # provider-chain 路由与传输选择
-│   ├── providers_api.py     # 各 API 直连客户端
-│   ├── environment.py       # 项目根目录与 .env 隔离加载
-│   ├── transport_cli.py     # llm_gateway 本地 Claude/Codex CLI 薄适配层
-│   ├── transport_http.py    # llm_gateway CLIProxyAPI HTTP 薄适配层
-│   └── catalog.py           # 静态回退 + 动态模型发现
+├── llm/                     # 圆桌专用的极薄业务适配
+│   ├── facade.py            # 把 gateway chain 适配为 LLMClient.generate
+│   ├── router.py            # gateway dispatch + 本项目 MockLLM 接缝
+│   └── providers_api.py     # LLMClient 协议、MockLLM 与展示信息
 ├── config/                  # 全部声明式配置
 │   ├── domain_experts/      # 主线专家：接 experts 语料
 │   ├── persona_inspired/    # 人物风格启发：纯风格或 people 语料
 │   ├── councils/            # 圆桌名单：哪些 Agent 一起上桌
 │   ├── agent_llms.json      # 每个 Agent 使用什么模型链
-│   ├── model_example.json   # 可复制的 provider-chain 速查清单
-│   └── model_catalog.json   # 模型清单数据（catalog.py 读取）
+│   └── model_example.json   # gateway 自动生成的完整模型速查清单
 ├── knowledge/               # 本地语料（不进 Git）
 │   ├── experts/             # 书籍级长文，按领域分目录
 │   └── people/              # 人物多来源语料：book / x / news / report
@@ -398,6 +382,12 @@ python -m rag.ingest --embedding-provider keyword
 ```
 
 `keyword` 不需要额外 API key，适合入门和本地测试。
+
+每个索引目录会同时生成 `chunks.jsonl` 和 `index_manifest.json`，后者记录语料范围、源文件、内容指纹与索引版本。重命名或删除语料目录后，可在全量重建时顺便清理已失效的旧索引：
+
+```bash
+python -m rag.ingest --embedding-provider keyword --prune-obsolete
+```
 
 人物语料检索时，不同来源类型有不同权重：`book` > `report` > `x` > `news`。
 
@@ -589,7 +579,7 @@ python main.py --topic "测试一下" --council experts --rounds 1 --mock
 
 ### UI 里的模型从哪里来？
 
-UI 直接编辑 provider-chain。关闭“实时模型”时使用 `config/model_catalog.json` 的稳定回退清单；开启后，共享 `llm_gateway` 为 Codex 读取 `~/.codex/models_cache.json`、为 Claude 返回官方稳定别名，并为 Codex Proxy / Antigravity / Grok 按 CLIProxyAPI `/v1/models` 的 `owned_by` 过滤；API provider 也统一由 gateway 读取各自模型接口。真实调用仍按 `config/agent_llms.json` 和 `.env` 执行。
+UI 直接编辑 provider-chain。关闭“实时模型”时读取 gateway 自动生成的 `config/model_example.json`；开启后，由 `llm_gateway` 统一发现本地 Codex/Claude、CLIProxyAPI 与直连 API 的模型。真实调用仍按 `config/agent_llms.json` 和 `.env` 执行，项目内没有第二份 catalog、provider registry 或 transport。
 
 ### 为什么真实 LLM 运行失败？
 
@@ -623,15 +613,12 @@ UI 直接编辑 provider-chain。关闭“实时模型”时使用 `config/model
 
 ## 开发者验证
 
-运行测试：
+本地提交前建议运行与 GitHub Actions 相同的核心检查（CI 覆盖 Python 3.10 与 3.13）：
 
 ```bash
+python -m pip check
+python -m compileall -q main.py roundtable llm rag person_crawl_agent ui tests
 python -m pytest -q
-```
-
-检查 JSON 是否合法：
-
-```bash
 python -m json.tool config/agent_llms.json >/dev/null
 ```
 

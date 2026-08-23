@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from roundtable.agent_llm_config import (
     load_agent_llm_config_document,
     load_agent_llm_configs,
@@ -13,10 +15,9 @@ def test_save_agent_llm_config_document_writes_sanitized_agent_configs(tmp_path:
         tmp_path,
         {
             "macroeconomics": {
-                "provider": "openrouter",
-                "model": "model-a",
-                "api_key_env": "OPENROUTER_API_KEY_1",
-                "base_url": "",
+                "provider_chain": "openrouter:model-a",
+                "max_attempts": 2,
+                "retry_backoff_seconds": 0.5,
             }
         },
     )
@@ -25,11 +26,11 @@ def test_save_agent_llm_config_document_writes_sanitized_agent_configs(tmp_path:
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["agents"]["macroeconomics"] == {
-        "provider": "openrouter",
-        "model": "model-a",
-        "api_key_env": "OPENROUTER_API_KEY_1",
+        "provider_chain": "openrouter:model-a",
+        "max_attempts": 2,
+        "retry_backoff_seconds": 0.5,
     }
-    assert load_agent_llm_configs(tmp_path)["macroeconomics"]["model"] == "model-a"
+    assert load_agent_llm_configs(tmp_path)["macroeconomics"]["max_attempts"] == 2
 
 
 def test_load_agent_llm_config_document_returns_default_when_missing(tmp_path: Path):
@@ -60,3 +61,15 @@ def test_agent_llm_config_accepts_workflow_style_provider_chain(tmp_path: Path):
         "max_output_tokens": 8192,
         "skip": ["claude"],
     }
+
+
+@pytest.mark.parametrize("legacy_key", ["api_key_env", "base_url", "timeout"])
+def test_agent_llm_config_rejects_transport_overrides(
+    tmp_path: Path,
+    legacy_key: str,
+) -> None:
+    with pytest.raises(ValueError, match="Unsupported LLM config keys"):
+        save_agent_llm_config_document(
+            tmp_path,
+            {"macroeconomics": {"provider": "openrouter", legacy_key: "legacy"}},
+        )
