@@ -1,5 +1,7 @@
 # agent_roundtable MCP Server
 
+> 本 MCP 服务是基于 [Random-Walk2026/agent_roundtable](https://github.com/Random-Walk2026/agent_roundtable)（作者 [Lamjinlab](https://github.com/Random-Walk2026)）的封装与扩展，感谢原作者。
+
 把 `agent_roundtable` 封装成一个 **MCP 服务**，让任意支持 MCP 的 Agent（DSH、Claude Desktop、Cursor 等）可以直接调用：
 
 - **调研时**：用 `search_knowledge` 检索本地专家语料库，用 `list_agents` / `get_agent` 了解可用的专家视角。

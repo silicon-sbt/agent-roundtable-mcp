@@ -1,5 +1,7 @@
 # agent_roundtable
 
+> **来源与致谢**：本项目基于 [Random-Walk2026/agent_roundtable](https://github.com/Random-Walk2026/agent_roundtable)（作者 [Lamjinlab](https://github.com/Random-Walk2026)）改造而来，主要新增了 MCP 服务封装（`mcp_server/`、`mcp_entry.py`、`README_MCP.md`），并让核心模块不再强制依赖 `llm_gateway`。感谢原作者的开源分享！原仓库未附带 LICENSE 声明（默认保留所有权利），使用与再分发请自行评估；本仓库新增的 MCP 相关代码为原创，可按需选用许可。
+
 一个本地运行的多 Agent 圆桌项目。
 
 你给一个话题，系统会请几位“专家 Agent”轮流发言，主持人负责追问、总结，最后把整场讨论保存成一份 Markdown 报告。
