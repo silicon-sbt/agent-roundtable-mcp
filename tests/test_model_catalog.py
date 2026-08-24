@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("llm_gateway")
 from llm_gateway import example_model_ids, read_model_example
 
 

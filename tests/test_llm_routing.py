@@ -13,6 +13,7 @@ from llm import (
     generate_text,
 )
 from llm import providers_api, router
+pytest.importorskip("llm_gateway")
 from llm_gateway import TextResponse
 
 

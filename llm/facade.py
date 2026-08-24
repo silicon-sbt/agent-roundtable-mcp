@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from llm_gateway import ChainEvent, ProviderRoute, TextGenerationRequest
-from llm_gateway import generate_text as gateway_generate_text
+try:
+    from llm_gateway import ChainEvent, ProviderRoute, TextGenerationRequest
+    from llm_gateway import generate_text as gateway_generate_text
+    GATEWAY_AVAILABLE = True
+except ImportError:  # pragma: no cover - llm_gateway is optional; mock works without it.
+    ChainEvent = None  # type: ignore[assignment,misc]
+    ProviderRoute = None  # type: ignore[assignment]
+    TextGenerationRequest = None  # type: ignore[assignment]
+    gateway_generate_text = None  # type: ignore[assignment]
+    GATEWAY_AVAILABLE = False
 
 from . import router
 from .providers_api import LLMClient, MockLLM
@@ -27,6 +35,11 @@ def generate_text_detailed(
 ) -> router.ProviderChainResult:
     """Execute the gateway chain while retaining effective model metadata."""
 
+    if gateway_generate_text is None:
+        raise RuntimeError(
+            "Real LLM generation requires the optional 'llm_gateway' package. "
+            "Install it (pip install -e ../llm_gateway) or use provider='mock'."
+        )
     events: list[ChainEvent] = []
     text, provider = gateway_generate_text(
         request,
@@ -77,6 +90,10 @@ def create_llm(
     selected = str(provider or "auto").strip().lower()
     if selected == "mock":
         return MockLLM(model=model or "mock")
+    if not GATEWAY_AVAILABLE:
+        # No llm_gateway: fall back to the deterministic mock (mirrors the
+        # documented "no key -> auto falls back to mock" behaviour).
+        return MockLLM(model=model or "mock")
     provider_chain: str | list[ProviderRoute]
     if selected == "auto":
         provider_chain = router.AUTO_PROVIDER_CHAIN
@@ -110,6 +127,8 @@ def create_llm_from_config(
 
     provider_chain = config.get("provider_chain")
     if provider_chain:
+        if not GATEWAY_AVAILABLE:
+            return fallback if fallback is not None else create_llm("auto")
         return ProviderChainLLM(
             TextGenerationRequest(
                 workflow=str(config.get("workflow") or "agent_roundtable"),

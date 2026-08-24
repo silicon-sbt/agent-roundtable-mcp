@@ -1,0 +1,13 @@
+# agent_roundtable MCP server dependencies
+# Install:  python -m pip install -r requirements-mcp.txt
+#
+# The optional llm_gateway package is NOT required: without it the service
+# runs with provider=mock or the built-in OpenAI-compatible client configured
+# via .env (DEEPSEEK_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY_1 / GEMINI_API_KEY_1).
+
+langgraph>=0.2
+langchain>=0.2
+langchain-text-splitters>=0.2
+PyYAML>=6.0
+requests>=2.31
+mcp>=1.2,<2

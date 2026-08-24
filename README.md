@@ -13,6 +13,20 @@
 
 你不需要懂 LangGraph 才能用它。把它理解成一个“可配置的专家圆桌工具”就可以。
 
+## MCP 服务（Agent 集成）
+
+项目附带一个 **MCP 服务**（`mcp_server/`），让 DSH / Claude Desktop / Cursor 等 Agent 可以直接调用圆桌能力：
+
+- 调研时用 `search_knowledge` 检索本地专家语料，`list_agents` / `get_agent` 查看可用专家。
+- 调研后用 `run_roundtable` 召集专家圆桌讨论，把调研发现通过 `context` 注入专家组，输出总结与 Markdown 报告。
+
+```bash
+.venv\Scripts\python -m pip install -r requirements-mcp.txt
+.venv\Scripts\python mcp_entry.py
+```
+
+详见 [README_MCP.md](README_MCP.md)。
+
 ## 现在能做什么
 
 - 用命令行或本地网页 UI 启动圆桌。

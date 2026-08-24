@@ -7,9 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from llm_gateway.direct import embed_direct
-
-
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
 KNOWLEDGE_DIR = Path("knowledge")
@@ -201,7 +198,7 @@ class OpenAICompatibleEmbeddingFunction:
         overrides = {self.api_key_env: api_key}
         if self.base_url:
             overrides[f"{provider.upper()}_BASE_URL"] = self.base_url
-        return embed_direct(provider, input, self.model, env_override=overrides)
+        return _embed_direct(provider, input, self.model, env_override=overrides)
 
 
 class GeminiEmbeddingFunction:
@@ -220,12 +217,30 @@ class GeminiEmbeddingFunction:
         api_key = os.getenv(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is required for Gemini embeddings.")
-        return embed_direct(
+        return _embed_direct(
             "gemini",
             input,
             self.model,
             env_override={"GEMINI_API_KEY": api_key},
         )
+
+
+def _embed_direct(
+    provider: str,
+    input: list[str],
+    model: str,
+    *,
+    env_override: dict[str, str],
+) -> list[list[float]]:
+    """Call llm_gateway.direct.embed_direct, loaded lazily (gateway is optional)."""
+    try:
+        from llm_gateway.direct import embed_direct
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(
+            "This embedding provider requires the optional 'llm_gateway' package. "
+            "Install it or set RAG_EMBEDDING_PROVIDER=mock/keyword."
+        ) from exc
+    return embed_direct(provider, input, model, env_override=env_override)
 
 
 def create_embedding_function(provider: str | None = None):
