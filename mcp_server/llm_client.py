@@ -126,6 +126,9 @@ class OpenAICompatLLM:
         self.max_output_tokens = max_output_tokens
         self.timeout = timeout
         self.max_retries = max(1, int(max_retries))
+        # Objective token counter refreshed on every successful generate(); used by
+        # the V2 L2 audit (never trust the agent's self-report for token usage).
+        self.last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def generate(self, prompt: str) -> str:
         """Call the chat endpoint with a small retry budget for transient failures."""
@@ -161,6 +164,12 @@ class OpenAICompatLLM:
                 raise RuntimeError(message)
             try:
                 data = response.json()
+                usage = data.get("usage") or {}
+                self.last_usage = {
+                    "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+                    "completion_tokens": int(usage.get("completion_tokens", 0)),
+                    "total_tokens": int(usage.get("total_tokens", 0)),
+                }
                 return str(data["choices"][0]["message"]["content"]).strip()
             except (KeyError, IndexError, TypeError, ValueError) as exc:
                 message = "Unexpected LLM API response from %s: %s" % (
