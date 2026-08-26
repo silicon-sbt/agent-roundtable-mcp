@@ -273,3 +273,19 @@ def test_add_personas_chinese_names_no_collision(tmp_path):
     speakers = {m["speaker_id"] for m in result["messages"]}
     assert "训诂学专家" in speakers, speakers
     assert "技术翻译史专家" in speakers, speakers
+
+
+def test_plan_council_reminds_to_supplement_corpus():
+    result = plan_council_impl("x", council="experts", root_dir=ROOT)
+    assert any("补充语料" in s for s in result["suggestions"])
+
+
+def test_run_roundtable_add_personas_returns_reminder(tmp_path):
+    output_dir = tmp_path / "logs"
+    add = json.dumps([{"name": "量化分析师", "role": "量化投资"}])
+    result = run_roundtable_impl(
+        "测试新增专家", council="experts", rounds=1, mock=True,
+        add_personas=add, output_dir=str(output_dir), root_dir=ROOT,
+    )
+    assert "reminder" in result
+    assert "补充语料" in result["reminder"]

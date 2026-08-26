@@ -301,6 +301,7 @@ def plan_council_impl(
         "如需补充视角：调用 run_roundtable 时传 add_personas（JSON 数组，每项至少含 name 和 role，可带 worldview / speaking_style / strengths / weaknesses / catchphrases / rag_expert_name / profile）。",
         "如需调整现有专家：传 adjust_personas（JSON 数组，每项含 id 与要覆盖的字段，如 role / worldview / speaking_style）。",
         "可用 list_agents 查看已有专家模板，用 search_knowledge 查本地语料判断视角缺口。",
+        "提示：若你给 council 新增/调整了专家，请记得为这些专家补充语料（person_crawl_agent / knowledge/），否则其知识库可能为空、讨论会缺依据。",
     ]
     return {
         "topic": topic,
@@ -422,7 +423,13 @@ def run_roundtable_impl(
             initial_messages=initial_messages,
             progress_callback=on_progress,
         )
-    return _serialize_result(result)
+    serialized = _serialize_result(result)
+    if add_personas or adjust_personas:
+        serialized["reminder"] = (
+            "提示：本次新增/调整了专家。请为这些专家补充语料（如调用 person_crawl_agent 抓取或向 knowledge/ 添加资料），"
+            "否则其知识库可能为空、讨论会缺依据。补充什么内容由你（调用方）判断。"
+        )
+    return serialized
 
 
 # ---------------------------------------------------------------------------
