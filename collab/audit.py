@@ -96,6 +96,10 @@ def validate_audit(
 
     if audit.token_usage < 0:
         errors.append("token_usage must be >= 0")
+    if audit.prompt_tokens < 0 or audit.completion_tokens < 0:
+        errors.append("prompt/completion_tokens must be >= 0")
+    if audit.cost_usd < 0:
+        errors.append("cost_usd must be >= 0")
 
     return AuditValidationResult(ok=not errors, errors=errors)
 
@@ -106,6 +110,12 @@ def build_audit(
     output_summary: str,
     output_reasoning: str = "",
     token_usage: int,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    provider: str = "",
+    model: str = "",
+    cost_usd: float = 0.0,
+    persona_id: str = "",
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
 ) -> TaskAudit:
@@ -118,6 +128,12 @@ def build_audit(
         output_summary=output_summary,
         output_reasoning=output_reasoning,
         token_usage=token_usage,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        provider=provider,
+        model=model,
+        cost_usd=cost_usd,
+        persona_id=persona_id,
         started_at=started_at,
         finished_at=finished_at or datetime.now(timezone.utc),
     )

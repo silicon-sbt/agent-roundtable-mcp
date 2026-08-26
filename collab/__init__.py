@@ -1,7 +1,11 @@
 """V2 collaboration engine (mode B: weak-decentralised execution).
 
-M1 scope: task model + state machine + L2 audit + wave executor +
-horizontal collaboration + arbitration + recovery/budget + async runner.
+M1: task model + state machine + L2 audit + wave executor + horizontal
+collaboration + arbitration + recovery/budget + async runner.
+M2: per-agent memory (T8/T9), cost/waste/budget (T10-T12), FR11 motion,
+dual-mode (T14), exec-dependency evaluation (T15), run persistence (T16).
+The M2 modules (memory/costing/motion/runstore) are imported directly, not
+re-exported here, to keep `from collab import ...` lightweight.
 See docs/AGENT_GUIDE.md.
 """
 

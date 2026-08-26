@@ -72,6 +72,12 @@ class TaskAudit:
         "output_summary",
         "output_reasoning",
         "token_usage",
+        "prompt_tokens",
+        "completion_tokens",
+        "provider",
+        "model",
+        "cost_usd",
+        "persona_id",
         "started_at",
         "finished_at",
     )
@@ -83,6 +89,12 @@ class TaskAudit:
         output_summary: str,
         output_reasoning: str = "",
         token_usage: int,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        provider: str = "",
+        model: str = "",
+        cost_usd: float = 0.0,
+        persona_id: str = "",
         started_at: datetime | None = None,
         finished_at: datetime | None = None,
     ) -> None:
@@ -90,6 +102,12 @@ class TaskAudit:
         self.output_summary = output_summary
         self.output_reasoning = output_reasoning
         self.token_usage = max(0, int(token_usage))
+        self.prompt_tokens = max(0, int(prompt_tokens))
+        self.completion_tokens = max(0, int(completion_tokens))
+        self.provider = provider
+        self.model = model
+        self.cost_usd = max(0.0, float(cost_usd))
+        self.persona_id = persona_id
         self.started_at = started_at or datetime.now(timezone.utc)
         self.finished_at = finished_at
 
@@ -99,6 +117,12 @@ class TaskAudit:
             "output_summary": self.output_summary,
             "output_reasoning": self.output_reasoning,
             "token_usage": self.token_usage,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "provider": self.provider,
+            "model": self.model,
+            "cost_usd": self.cost_usd,
+            "persona_id": self.persona_id,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
         }
@@ -127,6 +151,7 @@ class Task:
         "data_deps",
         "allowed_links",
         "budget_tokens",
+        "budget_soft_tokens",
         "status",
         "audit",
     )
@@ -141,6 +166,7 @@ class Task:
         data_deps: list[str] | None = None,
         allowed_links: list[str] | None = None,
         budget_tokens: int = DEFAULT_TASK_BUDGET_TOKENS,
+        budget_soft_tokens: int | None = None,
         status: TaskStatus = TaskStatus.PENDING,
         audit: TaskAudit | None = None,
     ) -> None:
@@ -155,6 +181,12 @@ class Task:
         self.data_deps = list(data_deps or [])
         self.allowed_links = list(allowed_links or [])
         self.budget_tokens = max(1, int(budget_tokens))
+        # T12 soft budget: a warning threshold below the hard quota (default 80%).
+        self.budget_soft_tokens = (
+            max(0, int(budget_soft_tokens))
+            if budget_soft_tokens is not None
+            else max(0, int(self.budget_tokens * 0.8))
+        )
         self.status = status
         self.audit = audit
 
@@ -167,6 +199,7 @@ class Task:
             "data_deps": list(self.data_deps),
             "allowed_links": list(self.allowed_links),
             "budget_tokens": self.budget_tokens,
+            "budget_soft_tokens": self.budget_soft_tokens,
             "status": self.status.value,
             "audit": self.audit.to_dict() if self.audit else None,
         }
@@ -183,6 +216,7 @@ class Task:
             data_deps=[str(x) for x in data.get("data_deps", [])],
             allowed_links=[str(x) for x in data.get("allowed_links", [])],
             budget_tokens=int(data.get("budget_tokens", DEFAULT_TASK_BUDGET_TOKENS)),
+            budget_soft_tokens=data.get("budget_soft_tokens"),
             status=TaskStatus(data.get("status", TaskStatus.PENDING.value)),
             audit=(
                 TaskAudit(
@@ -190,6 +224,12 @@ class Task:
                     output_summary=str(audit_data.get("output_summary", "")),
                     output_reasoning=str(audit_data.get("output_reasoning", "")),
                     token_usage=int(audit_data.get("token_usage", 0)),
+                    prompt_tokens=int(audit_data.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(audit_data.get("completion_tokens", 0) or 0),
+                    provider=str(audit_data.get("provider", "")),
+                    model=str(audit_data.get("model", "")),
+                    cost_usd=float(audit_data.get("cost_usd", 0.0) or 0.0),
+                    persona_id=str(audit_data.get("persona_id", "")),
                     started_at=_parse_dt(audit_data.get("started_at")),
                     finished_at=_parse_dt(audit_data.get("finished_at")),
                 )

@@ -27,6 +27,7 @@ from typing import Any
 
 from .graph import run_collab_sync
 from .models import Task
+from .runstore import RunStore
 
 _RUNS: dict[str, dict[str, Any]] = {}
 _LOCK = threading.Lock()
@@ -51,11 +52,15 @@ def run_collaboration(
     provider: str = "auto",
     mock: bool = False,
     root_dir: Any = None,
+    run_store: RunStore | None = None,
+    mode: str = "wave",
 ) -> str:
     """Start a collaboration on a background thread and return its run id.
 
-    The caller polls with get_collab_status(run_id). M1 storage is in-memory
-    (single process); M3 will wrap this pair as MCP tools.
+    The caller polls with get_collab_status(run_id). M1 storage is in-memory;
+    M2 (T16) optionally persists the run *summary* via the RunStore so history
+    survives a restart. M3/CLI drives this via run + status/report (the company
+    workflow entry, NOT an MCP server).
     """
     if not tasks:
         raise ValueError("tasks must not be empty")
@@ -75,10 +80,21 @@ def run_collaboration(
     }
     with _LOCK:
         _RUNS[run_id] = record
+    if run_store is not None:
+        run_store.save({
+            "run_id": run_id,
+            "status": "running",
+            "created_at": created,
+            "finished_at": None,
+            "stop_reason": None,
+            "provider": provider,
+            "mock": mock,
+            "summary": {"run_id": run_id, "status": "running", "created_at": created},
+        })
 
     def _worker() -> None:
         try:
-            state = run_collab_sync(parsed, provider=provider, mock=mock, root_dir=root_dir)
+            state = run_collab_sync(parsed, provider=provider, mock=mock, root_dir=root_dir, mode=mode)
             with _LOCK:
                 current = _RUNS.get(run_id)
                 if current is None:
@@ -91,6 +107,17 @@ def run_collaboration(
                 else:
                     current["status"] = "done"
                 current["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                if run_store is not None:
+                    run_store.save({
+                        "run_id": run_id,
+                        "status": current["status"],
+                        "created_at": current["created_at"],
+                        "finished_at": current["finished_at"],
+                        "stop_reason": current["stop_reason"],
+                        "provider": provider,
+                        "mock": mock,
+                        "summary": _build_summary(current),
+                    })
         except Exception as exc:
             with _LOCK:
                 current = _RUNS.get(run_id)
@@ -99,41 +126,73 @@ def run_collaboration(
                 current["status"] = "failed"
                 current["error"] = str(exc)
                 current["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                if run_store is not None:
+                    run_store.save({
+                        "run_id": run_id,
+                        "status": current["status"],
+                        "created_at": current["created_at"],
+                        "finished_at": current["finished_at"],
+                        "stop_reason": current["stop_reason"],
+                        "provider": provider,
+                        "mock": mock,
+                        "summary": _build_summary(current),
+                    })
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
     return run_id
 
 
-def get_collab_status(run_id: str) -> dict[str, Any]:
-    """Return the current status and (once done) the result summary."""
+def _build_summary(record: dict[str, Any]) -> dict[str, Any]:
+    """Build the compact run summary (digest, not full graph state)."""
+    summary: dict[str, Any] = {
+        "run_id": record.get("run_id"),
+        "status": record.get("status", "running"),
+        "created_at": record.get("created_at"),
+        "finished_at": record.get("finished_at"),
+        "stop_reason": record.get("stop_reason"),
+        "error": record.get("error"),
+    }
+    state = record.get("state")
+    if state is not None:
+        summary["task_count"] = len(state.get("tasks", []))
+        summary["results"] = [
+            {
+                "id": r.get("id"),
+                "status": r.get("status"),
+                "failure_type": r.get("failure_type", ""),
+            }
+            for r in state.get("results", [])
+        ]
+        summary["token_total"] = state.get("token_total", 0)
+        summary["overspend_tokens"] = _overspend_of(state)
+        summary["final_report"] = state.get("final_report", "")
+    return summary
+
+
+def get_collab_status(run_id: str, *, run_store: RunStore | None = None) -> dict[str, Any]:
+    """Return the current status and (once done) the result summary.
+
+    Live runs come from memory; a run this process does not know (e.g. from a
+    previous run after restart) is looked up in the optional persisted RunStore.
+    """
     with _LOCK:
         record = _RUNS.get(run_id)
-        if record is None:
-            return {"run_id": run_id, "status": "not_found", "error": "unknown run id"}
-        summary: dict[str, Any] = {
-            "run_id": run_id,
-            "status": record["status"],
-            "created_at": record["created_at"],
-            "finished_at": record["finished_at"],
-            "stop_reason": record["stop_reason"],
-            "error": record["error"],
-        }
-        state = record["state"]
-        if state is not None:
-            summary["task_count"] = len(state.get("tasks", []))
-            summary["results"] = [
-                {
-                    "id": r.get("id"),
-                    "status": r.get("status"),
-                    "failure_type": r.get("failure_type", ""),
-                }
-                for r in state.get("results", [])
-            ]
-            summary["token_total"] = state.get("token_total", 0)
-            summary["overspend_tokens"] = _overspend_of(state)
-            summary["final_report"] = state.get("final_report", "")
-        return summary
+    if record is not None:
+        return _build_summary(record)
+    if run_store is not None:
+        stored = run_store.get(run_id)
+        if stored is not None:
+            base = {
+                "run_id": run_id,
+                "status": stored["status"],
+                "created_at": stored["created_at"],
+                "finished_at": stored["finished_at"],
+                "stop_reason": stored["stop_reason"],
+            }
+            base.update(stored["summary"])
+            return base
+    return {"run_id": run_id, "status": "not_found", "error": "unknown run id"}
 
 
 def _overspend_of(state: dict[str, Any]) -> int:
@@ -163,13 +222,16 @@ def stop_collab(run_id: str, reason: str = "user requested") -> dict[str, Any]:
         return {"run_id": run_id, "ok": True, "stop_reason": reason}
 
 
-def list_collab_runs() -> list[dict[str, Any]]:
-    """List in-memory runs (newest first) for diagnostics/tests."""
+def list_collab_runs(*, run_store: RunStore | None = None) -> list[dict[str, Any]]:
+    """List runs (newest first); live memory + optional persisted history."""
+    merged: dict[str, dict[str, Any]] = {}
+    if run_store is not None:
+        for r in run_store.list():
+            merged[str(r["run_id"])] = {"run_id": str(r["run_id"]), "status": str(r["status"]), "created_at": str(r["created_at"])}
     with _LOCK:
-        runs = [
-            {"run_id": rid, "status": r["status"], "created_at": r["created_at"]}
-            for rid, r in _RUNS.items()
-        ]
+        for rid, r in _RUNS.items():
+            merged[str(rid)] = {"run_id": str(rid), "status": r["status"], "created_at": r["created_at"]}
+    runs = list(merged.values())
     runs.sort(key=lambda item: item["created_at"], reverse=True)
     return runs
 

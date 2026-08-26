@@ -30,8 +30,10 @@ from roundtable.loader import load_persona
 
 from .arbitration import hard_rules_check, manager_arbitrate
 from .audit import build_audit, render_summary_template
+from .costing import cost_summary, feedback_summary, price_tokens, rep_by_persona, waste_breakdown
 from .models import CollabMessage, Task, TaskAudit, TaskStatus
 from .state_machine import TaskStateMachine
+from .memory import build_memory_context, memory_entries_from_output
 
 
 def _merge_results(current: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -57,7 +59,31 @@ class CollabState(TypedDict, total=False):
     messages: Annotated[list[dict[str, Any]], add]
     token_total: Annotated[int, add]
     errors: Annotated[list[str], add]
+    attempts: Annotated[list[dict[str, Any]], add]  # T11: per-execution cost/outcome for waste & feedback metrics
+    mode: str                     # T14: "wave" | "parallel" (runtime mode)
+    experimental: bool            # T14: parallel is experimental
+    parallel_note: str            # T14: why parallel fell back to wave
     final_report: str
+
+
+def resolve_mode(tasks: list[dict[str, Any]], mode: str = "wave") -> tuple[str, bool, str]:
+    """Determine the effective execution mode (T14).
+
+    'parallel' is only allowed when EVERY task has empty data_deps (no data
+    dependency to wait on); otherwise it falls back to 'wave' (the current wave
+    scheduler already parallelises independent tasks). Parallel is a MARKER over
+    that existing scheduling - it does not swap in a second scheduler / lock
+    (roundtable). It is marked experimental until proven. Empty tasks fall back
+    to wave (nothing to parallelise, not a vacuous 'experimental').
+    """
+    mode = (mode or "wave").strip().lower()
+    if mode not in ("wave", "parallel"):
+        raise ValueError("mode must be wave or parallel")
+    if mode == "parallel":
+        if not tasks or any(t.get("data_deps") for t in tasks):
+            return "wave", False, "parallel requires no data_deps; fell back to wave"
+        return "parallel", True, ""
+    return "wave", False, ""
 
 
 TERMINAL_STATUSES = {TaskStatus.DONE.value, TaskStatus.FAILED.value, TaskStatus.STOPPED.value}
@@ -67,6 +93,7 @@ RUN_TERMINAL_STATUSES = TERMINAL_STATUSES | {TaskStatus.BLOCKED.value}
 # T6 failure recovery + budget:
 MAX_TASK_RETRIES = 1  # retry once for recoverable failures (manager_revise / transient)
 GLOBAL_TOKEN_BUDGET = 400_000  # global cap; per-task budget lives on Task.budget_tokens
+GLOBAL_BUDGET_SOFT = int(GLOBAL_TOKEN_BUDGET * 0.8)  # T12 soft threshold (warning level, stop only at hard cap)
 
 
 def _build_task_prompt(
@@ -76,6 +103,7 @@ def _build_task_prompt(
     incoming_messages: list[str] | None = None,
     retry_feedback: str = "",
     persona_hint: str = "",
+    memory_context: str = "",
 ) -> str:
     """Assemble the execution prompt: persona hint + task input + cited outputs
     + horizontal messages (T4): peer summaries this task may respond to.
@@ -83,6 +111,8 @@ def _build_task_prompt(
     parts = ["[COLLAB_TASK_EXECUTION]"]
     if persona_hint:
         parts.append("你以如下角色执行任务：\n" + persona_hint)
+    if memory_context.strip():
+        parts.append(memory_context)
     parts.append("任务：" + task.input)
     if task.expected_output:
         parts.append("期望产出：" + task.expected_output)
@@ -125,6 +155,7 @@ def _executor_node_factory(
     llm: Any,
     *,
     root_dir: Any = None,
+    memory_store: Any = None,
 ) -> Callable[[CollabState], dict[str, Any]]:
     """Build the execute_task node, capturing the LLM and repo root."""
 
@@ -148,20 +179,47 @@ def _executor_node_factory(
         retry_feedback = previous.get("retry_feedback", "")
         attempts = int(previous.get("attempts", 1))
 
+        memory_context = ""
+        if memory_store is not None:
+            memory_context = build_memory_context(memory_store.search(task.persona_id, task.input))
         prompt = _build_task_prompt(
             task,
             references=references,
             incoming_messages=incoming,
             retry_feedback=retry_feedback,
             persona_hint=_persona_hint(task.persona_id, root_dir),
+            memory_context=memory_context,
         )
         started = datetime.now(timezone.utc)
         try:
             content = llm.generate(prompt)
             token_used = _token_usage(llm)
-            # Per-task token budget (T6): a task exceeding its quota is failed
-            # with failure_type budget_exceeded and never retried.
+            # T10 cost: capture the objective usage split + identity from the LLM
+            # client (already on it), then price it. Never trust a self-report.
+            usage = getattr(llm, "last_usage", None)
+            if not isinstance(usage, dict):
+                usage = {}
+            prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+            provider = str(getattr(llm, "provider_name", "") or "")
+            model = str(getattr(llm, "model", "") or "")
+            cost_usd = price_tokens(provider, model, prompt_tokens, completion_tokens)
+            # T6/T12: task budget roll-up across retries + soft/hard thresholds.
             task_token_total = int(previous.get("task_token_total", 0)) + token_used
+            soft_warn = task_token_total > task.budget_soft_tokens
+            base_attempt = {
+                "id": task.id,
+                "persona_id": task.persona_id,
+                "attempt": attempts,
+                "token_usage": token_used,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost_usd": cost_usd,
+                "provider": provider,
+                "model": model,
+                "soft_budget_warning": soft_warn,
+            }
+            # Hard per-task budget (T6): exceeding the quota fails the task (never retried).
             if task_token_total > task.budget_tokens:
                 machine.fail()
                 return {
@@ -171,10 +229,12 @@ def _executor_node_factory(
                             "status": TaskStatus.FAILED.value,
                             "attempts": attempts,
                             "failure_type": "budget_exceeded",
+                            "overspend_kind": "loss",
                             "error": "task token budget exceeded: " + str(task_token_total) + " > " + str(task.budget_tokens),
                         }
                     ],
                     "token_total": token_used,
+                    "attempts": [dict(base_attempt, status="failed", failure_type="budget_exceeded")],
                 }
             audit = build_audit(
                 input_snapshot=prompt[:2000],
@@ -185,6 +245,12 @@ def _executor_node_factory(
                 ),
                 output_reasoning=content,  # open-domain track (raw output)
                 token_usage=token_used,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                provider=provider,
+                model=model,
+                cost_usd=cost_usd,
+                persona_id=task.persona_id,
                 started_at=started,
             )
             machine.complete(audit)
@@ -212,11 +278,14 @@ def _executor_node_factory(
                         "output": content,
                         "attempts": attempts,
                         "task_token_total": task_token_total,
+                        "soft_budget_warning": soft_warn,
+                        "overspend_kind": "debt" if soft_warn else "",
                         "audit": audit.to_dict(),
                     }
                 ],
                 "messages": [peer_message.to_dict()],
                 "token_total": token_used,
+                "attempts": [dict(base_attempt, status="done", failure_type="")],
             }
         except Exception as exc:
             machine.fail()
@@ -233,6 +302,25 @@ def _executor_node_factory(
                 ],
                 "errors": ["task " + task.id + " failed: " + str(exc)],
                 "token_total": _token_usage(llm),
+                "attempts": [
+                    {
+                        "id": task.id,
+                        "attempt": attempts,
+                        "status": "failed",
+                        "failure_type": "transient",
+                        "token_usage": _token_usage(llm),
+                        "prompt_tokens": int((getattr(llm, "last_usage", None) or {}).get("prompt_tokens", 0) or 0),
+                        "completion_tokens": int((getattr(llm, "last_usage", None) or {}).get("completion_tokens", 0) or 0),
+                        "cost_usd": price_tokens(
+                            str(getattr(llm, "provider_name", "") or ""),
+                            str(getattr(llm, "model", "") or ""),
+                            int((getattr(llm, "last_usage", None) or {}).get("prompt_tokens", 0) or 0),
+                            int((getattr(llm, "last_usage", None) or {}).get("completion_tokens", 0) or 0),
+                        ),
+                        "provider": str(getattr(llm, "provider_name", "") or ""),
+                        "model": str(getattr(llm, "model", "") or ""),
+                    }
+                ],
             }
 
     return execute_task_node
@@ -376,6 +464,7 @@ def _budget_stop_node(state: CollabState) -> dict[str, Any]:
                 "id": task_id,
                 "status": TaskStatus.STOPPED.value,
                 "failure_type": "global_budget",
+                "overspend_kind": "loss",
                 "overspend_tokens": overspend,
                 "error": "stopped by global token budget (overspend: " + str(overspend) + ")",
             }
@@ -482,6 +571,7 @@ def _arbitration_node_factory(
     llm: Any,
     *,
     root_dir: Any = None,
+    memory_store: Any = None,
 ) -> Callable[[CollabState], dict[str, Any]]:
     """Build the arbitration node: hard rules + manager provisional for each
     DONE task without a verdict yet. Failing tasks are marked FAILED with the
@@ -504,6 +594,12 @@ def _arbitration_node_factory(
                     output_summary=str(audit_data.get("output_summary", "")),
                     output_reasoning=str(audit_data.get("output_reasoning", "")),
                     token_usage=int(audit_data.get("token_usage", 0)),
+                    prompt_tokens=int(audit_data.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(audit_data.get("completion_tokens", 0) or 0),
+                    provider=str(audit_data.get("provider", "")),
+                    model=str(audit_data.get("model", "")),
+                    cost_usd=float(audit_data.get("cost_usd", 0.0) or 0.0),
+                    persona_id=str(audit_data.get("persona_id", "")),
                 )
             else:
                 audit = None
@@ -538,6 +634,11 @@ def _arbitration_node_factory(
                 updated_result["error"] = "; ".join(reasons) if reasons else "arbitration rejected"
             if manager == "revise":
                 updated_result["failure_type"] = "manager_revise"
+            # T8: write memory only after the task's arbitration passed (verdict.ok),
+            # so a soon-to-be-REVISE output is never persisted as a cross-run memory.
+            if ok and memory_store is not None:
+                for mem in memory_entries_from_output(task, audit, snapshot_ids=snapshot_ids):
+                    memory_store.add(mem)
             updated.append(updated_result)
         return {"results": updated}
 
@@ -562,7 +663,14 @@ def _collect_node(state: CollabState) -> dict[str, Any]:
     errors = list(state.get("errors", []))
     if discrepancies:
         errors.extend("BLOCKED discrepancy: " + d for d in discrepancies)
-    report = _build_collab_report(tasks, by_id, token_total=state.get("token_total", 0))
+    report = _build_collab_report(
+        tasks, by_id,
+        token_total=state.get("token_total", 0),
+        attempts=state.get("attempts", []),
+        mode=state.get("mode", "wave"),
+        experimental=state.get("experimental", False),
+        parallel_note=state.get("parallel_note", ""),
+    )
     if discrepancies:
         report += "\n\n## BLOCKED 复核异常\n- " + "\n- ".join(discrepancies)
     return {"final_report": report, "errors": errors}
@@ -573,9 +681,53 @@ def _build_collab_report(
     results: dict[str, dict[str, Any]],
     *,
     token_total: int,
+    attempts: list[dict[str, Any]] | None = None,
+    mode: str = "wave",
+    experimental: bool = False,
+    parallel_note: str = "",
 ) -> str:
     """Summarise the run: per-task status, audited output, citations, totals."""
-    lines = ["# 协作执行报告", "", "- 任务数: %d" % len(tasks), "- Token 总消耗: %d" % token_total, "", "## 任务结果"]
+    lines = ["# 协作执行报告", "", "- 任务数: %d" % len(tasks), "- Token 总消耗: %d" % token_total]
+    lines.append("- 模式: " + mode + ("（experimental）" if experimental else ""))
+    if parallel_note:
+        lines.append("- 说明: " + parallel_note)
+    cost = cost_summary(list(results.values()))
+    if cost["total_usd"] > 0:
+        lines.append("- 成本(USD): $%.4f" % cost["total_usd"])
+        if cost["estimated_usd"] > 0:
+            lines.append("- 其中估算成本(USD): $%.4f" % cost["estimated_usd"])
+        by_persona = {k: "%.4f" % v for k, v in sorted(cost["per_persona"].items())}
+        lines.append("- 成本按 Persona: " + "；".join(k + "=$" + v for k, v in by_persona.items()))
+        est_persona = {k: "%.4f" % v for k, v in sorted(cost["estimated_persona"].items())}
+        if est_persona:
+            lines.append("- 其中估算按 Persona: " + "；".join(k + "=$" + v for k, v in est_persona.items()))
+    waste = waste_breakdown(list(results.values()), attempts or [])
+    if waste["waste_cost_usd"] > 0 or waste["waste_tokens"] > 0:
+        lines.append("- 损耗(USD): $%.4f" % waste["waste_cost_usd"])
+        lines.append("- 损耗 Token: %d" % waste["waste_tokens"])
+        if waste["waste_reasons"]:
+            reasons = ["%s:%s($%.4f)" % (r["id"], r["failure_type"], r["cost_usd"]) for r in waste["waste_reasons"]]
+            lines.append("- 损耗原因: " + "；".join(reasons))
+    fb = feedback_summary(attempts or [], list(results.values()))
+    if fb["tasks_that_retried"] > 0:
+        rr = fb["recovery_rate"]
+        rr_text = ("%.3f" % rr) if rr is not None else "N/A"
+        lines.append("- 重试恢复: %d/%d (recovery %s)" % (fb["retries_that_succeeded"], fb["tasks_that_retried"], rr_text))
+    # T12: soft-budget warning + overspend responsibility + per-persona rep (exposed, not gated).
+    soft_warn_count = sum(1 for r in results.values() if isinstance(r, dict) and r.get("soft_budget_warning"))
+    if soft_warn_count:
+        lines.append("- 软上限预警任务数: %d" % soft_warn_count)
+    if token_total > GLOBAL_BUDGET_SOFT:
+        lines.append("- 全局预算预警: 已超过软上限(%.0f%% of %d)" % (GLOBAL_BUDGET_SOFT / GLOBAL_TOKEN_BUDGET * 100, GLOBAL_TOKEN_BUDGET))
+    debt = sum(1 for r in results.values() if isinstance(r, dict) and r.get("overspend_kind") == "debt")
+    loss = sum(1 for r in results.values() if isinstance(r, dict) and r.get("overspend_kind") == "loss")
+    if debt or loss:
+        lines.append("- 超支责任: debt=%d; loss=%d" % (debt, loss))
+    rep = rep_by_persona(list(results.values()), attempts or [])
+    if rep:
+        lines.append("- Persona 信誉(有效/总成本): " + "；".join(k + "=%.2f" % v for k, v in sorted(rep.items())))
+    lines.append("")
+    lines.append("## 任务结果")
     for task_dict in tasks:
         task_id = str(task_dict.get("id"))
         result = results.get(task_id, {})
@@ -596,6 +748,7 @@ def build_collab_graph(
     llm: Any,
     *,
     root_dir: Any = None,
+    memory_store: Any = None,
 ) -> Any:
     """Compile the mode-B execution graph.
 
@@ -607,10 +760,10 @@ def build_collab_graph(
     """
     builder = StateGraph(CollabState)
     builder.add_node("manager", _manager_node)
-    builder.add_node("execute_task", _executor_node_factory(llm, root_dir=root_dir))
+    builder.add_node("execute_task", _executor_node_factory(llm, root_dir=root_dir, memory_store=memory_store))
     builder.add_node("blocker", _blocker_node)
     builder.add_node("budget_stop", _budget_stop_node)
-    builder.add_node("arbitrate", _arbitration_node_factory(llm, root_dir=root_dir))
+    builder.add_node("arbitrate", _arbitration_node_factory(llm, root_dir=root_dir, memory_store=memory_store))
     builder.add_node("collect", _collect_node)
     builder.add_edge(START, "manager")
     builder.add_conditional_edges(
@@ -643,22 +796,32 @@ def run_collab_sync(
     provider: str = "auto",
     mock: bool = False,
     root_dir: Any = None,
+    memory_store: Any = None,
+    mode: str = "wave",
 ) -> dict[str, Any]:
     """Synchronous convenience entry (T7 will wrap this async).
 
     Builds an LLM from provider/mock, compiles the graph, invokes it with the
-    given tasks, and returns the terminal state (tasks/results/report).
+    given tasks, and returns the terminal state (tasks/results/report). mode is
+    "wave" (default) or "parallel" (experimental; only when all tasks have no
+    data_deps - the report is marked experimental otherwise it falls back).
     """
     if not tasks:
         raise ValueError("tasks must not be empty")
+    task_dicts = [task.to_dict() for task in tasks]
+    eff_mode, experimental, parallel_note = resolve_mode(task_dicts, mode)
     llm = resolve_llm("mock" if mock else provider, root_dir=root_dir)
-    app = build_collab_graph(llm, root_dir=root_dir)
+    app = build_collab_graph(llm, root_dir=root_dir, memory_store=memory_store)
     initial: CollabState = {
-        "tasks": [task.to_dict() for task in tasks],
+        "tasks": task_dicts,
         "results": [],
         "messages": [],
         "token_total": 0,
         "errors": [],
+        "attempts": [],
+        "mode": eff_mode,
+        "experimental": experimental,
+        "parallel_note": parallel_note,
     }
     return app.invoke(initial)
 
