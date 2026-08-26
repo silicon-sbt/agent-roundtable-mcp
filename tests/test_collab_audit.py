@@ -14,7 +14,7 @@ from collab.audit import (
     validate_audit,
 )
 from collab.models import TaskAudit
-from mcp_server.llm_client import OpenAICompatLLM
+from collab.llm import OpenAICompatLLM
 
 
 def _valid_audit(**overrides) -> TaskAudit:
@@ -112,7 +112,7 @@ def test_llm_client_captures_usage():
         "choices": [{"message": {"content": "hi"}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
     }
-    with mock.patch("mcp_server.llm_client.requests.post", return_value=fake_response):
+    with mock.patch("collab.llm.requests.post", return_value=fake_response):
         text = llm.generate("hello")
     assert text == "hi"
     assert llm.last_usage["total_tokens"] == 15
@@ -128,7 +128,7 @@ def test_llm_client_usage_defaults_to_zero_when_absent():
     fake_response.json.return_value = {
         "choices": [{"message": {"content": "hi"}}],
     }
-    with mock.patch("mcp_server.llm_client.requests.post", return_value=fake_response):
+    with mock.patch("collab.llm.requests.post", return_value=fake_response):
         llm.generate("hello")
     assert llm.last_usage["total_tokens"] == 0
 

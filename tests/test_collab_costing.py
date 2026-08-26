@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from collab.costing import cost_by_persona, cost_summary, is_estimated, price_tokens
+from collab.costing import cost_by_persona, cost_summary, is_estimated, memory_summary, price_tokens
 from collab.graph import build_collab_graph
 from collab.models import Task
 
@@ -109,3 +109,44 @@ def test_executor_writes_cost_and_persona_into_audit_and_report():
     report = state["final_report"]
     assert "成本(USD)" in report
     assert "computing=$" in report
+
+
+def test_memory_summary_is_subset_not_addition():
+    results = [
+        {"audit": {"persona_id": "computing", "cost_usd": 0.003, "provider": "openai", "model": "gpt-4o-mini", "memory_tokens": 300}},
+        {"audit": {"persona_id": "history", "cost_usd": 0.002, "provider": "openai", "model": "gpt-4o-mini", "memory_tokens": 0}},
+    ]
+    m = memory_summary(results)
+    assert m["memory_tokens"] == 300
+    # openai input rate 0.00015/1K -> 300 * 0.00015 / 1000
+    assert abs(m["memory_cost_usd"] - 0.000045) < 1e-9
+    assert abs(m["memory_share"] - 0.000045 / 0.005) < 1e-9
+
+
+def test_memory_summary_skips_missing_audit():
+    m = memory_summary([{"audit": None}, {"audit": {"cost_usd": 0.001}}])
+    assert m["memory_tokens"] == 0
+    assert m["memory_cost_usd"] == 0
+    assert m["memory_share"] == 0
+
+
+def test_executor_writes_memory_tokens_into_audit_and_report(tmp_path: Path):
+    from collab.memory import MemoryEntry, MemoryStore
+
+    store = MemoryStore(tmp_path / "mem.db")
+    store.add(MemoryEntry(agent_id="computing", content="历史结论：采用方案A", tags=["方案", "成本"]))
+    llm = CostCaptureLLM()
+    app = build_collab_graph(llm, root_dir=ROOT, memory_store=store)
+    state = app.invoke(
+        {
+            "tasks": [_task("t-001", "computing", "估算方案成本", expected_output="给出方案").to_dict()],
+            "results": [],
+            "messages": [],
+            "token_total": 0,
+            "errors": [],
+        }
+    )
+    results = {r["id"]: r for r in state["results"]}
+    audit = results["t-001"]["audit"]
+    assert audit["memory_tokens"] > 0
+    assert "记忆开销(USD)" in state["final_report"]

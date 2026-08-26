@@ -141,6 +141,39 @@ def cost_summary(
     }
 
 
+def memory_summary(
+    results: list[dict[str, Any]],
+    *,
+    pricing: dict[str, tuple[float, float]] | None = None,
+) -> dict[str, Any]:
+    """Sub-accounting of the memory-injection portion of prompt cost (T20).
+
+    memory_tokens are the prompt tokens spent injecting the retrieved memory
+    context. They are ALREADY part of prompt_tokens/cost_usd, so this is a
+    BREAKDOWN (subset), never an addition. Returns tokens + USD (priced at the
+    input rate) + share of total cost.
+    """
+    tokens = 0
+    usd = 0.0
+    total = 0.0
+    for result in results:
+        audit = result.get("audit") if isinstance(result, dict) else None
+        if not isinstance(audit, dict):
+            continue
+        mt = int(audit.get("memory_tokens", 0) or 0)
+        tokens += mt
+        provider = str(audit.get("provider", "") or "")
+        model = str(audit.get("model", "") or "")
+        if mt > 0:
+            usd += price_tokens(provider, model, mt, 0, pricing=pricing)
+        total += float(audit.get("cost_usd", 0.0) or 0.0)
+    return {
+        "memory_tokens": tokens,
+        "memory_cost_usd": round(usd, 6),
+        "memory_share": round(usd / total, 6) if total > 0 else 0.0,
+    }
+
+
 def waste_breakdown(
     results: list[dict[str, Any]],
     attempts: list[dict[str, Any]] | None = None,
@@ -231,6 +264,11 @@ def feedback_summary(
     FINAL outcome is an accepted DONE. A computable proxy (roundtable: rename
     feedback to compliance, do not claim true quality). reason_specificity is
     intentionally NOT computed (cut per roundtable).
+
+    Official recovery-rate formula: recovery_rate = tasks_that_retried_succeeded /
+    tasks_that_retried (a retry-based metric, not 'final-passed / first-attempt').
+    It is None when nothing was retried (no signal, not 'perfect') - callers must
+    render 'N/A' rather than 0/1.
     """
     att = attempts or []
     results = results or []

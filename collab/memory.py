@@ -33,10 +33,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from rag.config import tokenize
+from .tokenize import tokenize
 from collab.arbitration import compute_anchor_coverage, detect_decision_conflicts
 
 DEFAULT_TOP_K = 5
+DEFAULT_MIN_SCORE = 1.0
+DEFAULT_CANDIDATE_LIMIT = 50
 _ACTIVE = "active"
 _STALE = "stale"
 _CORRECTION = "correction"
@@ -376,19 +378,19 @@ class MemoryStore:
             ).fetchone()
         return self._rows_to_entries([row])[0] if row else None
 
-    def list(self, agent_id: str, *, include_stale: bool = False) -> list[MemoryEntry]:
+    def list(self, agent_id: str, *, include_stale: bool = False, limit: int | None = None) -> list[MemoryEntry]:
         if include_stale:
             # include_stale re-includes only STALE entries; overridden entries are
             # ALWAYS excluded (they were superseded, not merely expired).
-            rows = self._query(
-                "SELECT * FROM memories WHERE agent_id=? AND status!=? ORDER BY updated_at DESC",
-                (agent_id, _OVERRIDDEN),
-            )
+            sql = "SELECT * FROM memories WHERE agent_id=? AND status!=? ORDER BY updated_at DESC"
+            params: list[Any] = [agent_id, _OVERRIDDEN]
         else:
-            rows = self._query(
-                "SELECT * FROM memories WHERE agent_id=? AND status NOT IN (?, ?) ORDER BY updated_at DESC",
-                (agent_id, _STALE, _OVERRIDDEN),
-            )
+            sql = "SELECT * FROM memories WHERE agent_id=? AND status NOT IN (?, ?) ORDER BY updated_at DESC"
+            params = [agent_id, _STALE, _OVERRIDDEN]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        rows = self._query(sql, params)
         return self._rows_to_entries(rows)
 
     def search(
@@ -397,16 +399,24 @@ class MemoryStore:
         query: str,
         *,
         top_k: int = DEFAULT_TOP_K,
+        min_score: float = DEFAULT_MIN_SCORE,
+        candidate_limit: int | None = DEFAULT_CANDIDATE_LIMIT,
         include_stale: bool = False,
     ) -> list[MemoryEntry]:
-        """Top-K keyword retrieval (reuses rag.config.tokenize for scoring)."""
+        """Top-K keyword retrieval (reuses rag.config.tokenize for scoring).
+
+        T21 (FR-GAP-2): min_score gates weak lexical hits (score < min_score is
+        dropped -> no strong hit, no injection), and candidate_limit bounds how
+        many (most-recent) entries are fetched & scored per agent so the scan
+        does not grow O(N) with the store. candidate_limit=None -> no cap.
+        """
         now = _now()
         query_terms = Counter(tokenize(query))
-        candidates = self.list(agent_id, include_stale=include_stale)
+        candidates = self.list(agent_id, include_stale=include_stale, limit=candidate_limit)
         if not query_terms:
             return candidates[:top_k]
         scored = [(entry, _score(entry, query_terms, now=now)) for entry in candidates]
-        hits = [(entry, s) for entry, s in scored if s > 0.0]
+        hits = [(entry, s) for entry, s in scored if s > 0.0 and s >= min_score]
         # Higher score first; for equal scores, newer first (numeric timestamp).
         hits.sort(key=lambda pair: (-pair[1], -(pair[0].updated_at.timestamp() if pair[0].updated_at else 0.0)))
         return [entry for entry, _ in hits[:top_k]]
@@ -552,6 +562,8 @@ def _extract_conclusion(summary: str) -> str:
 
 __all__ = [
     "DEFAULT_TOP_K",
+    "DEFAULT_MIN_SCORE",
+    "DEFAULT_CANDIDATE_LIMIT",
     "MemoryEntry",
     "MemoryStore",
     "build_memory_context",

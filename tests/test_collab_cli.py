@@ -72,3 +72,91 @@ def test_runner_threads_mode_parallel(tmp_path: Path):
     st = get_collab_status(run_id, run_store=store)
     assert st["status"] == "done"
     assert "模式: parallel（experimental）" in st["final_report"]
+
+
+def test_build_summary_includes_cost_waste_recovery():
+    from collab.runner import _build_summary
+
+    record = {
+        "run_id": "r1",
+        "status": "done",
+        "created_at": "2025-01-01T00:00:00+00:00",
+        "finished_at": "2025-01-01T00:00:01+00:00",
+        "stop_reason": None,
+        "error": None,
+        "provider": "openai",
+        "mock": False,
+        "state": {
+            "tasks": [{"id": "t1", "persona_id": "computing", "input": "x"}],
+            "results": [
+                {
+                    "id": "t1",
+                    "status": "done",
+                    "verdict": {"ok": True},
+                    "audit": {
+                        "persona_id": "computing",
+                        "token_usage": 100,
+                        "provider": "openai",
+                        "model": "gpt-4o-mini",
+                        "cost_usd": 0.02,
+                        "memory_tokens": 200,
+                    },
+                }
+            ],
+            "token_total": 100,
+            "attempts": [],
+            "final_report": "# report",
+        },
+    }
+    s = _build_summary(record)
+    assert s["cost_usd"] == 0.02
+    assert s["cost_by_persona"]["computing"] == 0.02
+    assert s["memory_tokens"] == 200
+    # openai input rate 0.00015/1K -> 200*0.00015/1000
+    assert abs(s["memory_cost_usd"] - 0.00003) < 1e-9
+    assert abs(s["memory_share"] - 0.00003 / 0.02) < 1e-9
+    assert "waste_cost_usd" not in s  # no waste => field omitted
+    assert s.get("recovery_rate") is None
+
+
+def test_cli_cost_reads_persisted_summary(tmp_path: Path, capsys):
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    store.save(
+        {
+            "run_id": "r-cost",
+            "status": "done",
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "finished_at": "2025-01-01T00:00:01+00:00",
+            "stop_reason": None,
+            "error": None,
+            "provider": "openai",
+            "mock": False,
+            "summary": {
+                "run_id": "r-cost",
+                "status": "done",
+                "cost_usd": 0.02,
+                "cost_priced_usd": 0.024,
+                "cost_estimated_usd": 0.0,
+                "cost_by_persona": {"computing": 0.02},
+                "memory_tokens": 200,
+                "memory_cost_usd": 0.00003,
+                "memory_share": 0.0015,
+                "waste_cost_usd": 0.005,
+                "waste_tokens": 20,
+                "waste_reasons": ["transient retry"],
+                "retries_that_succeeded": 1,
+                "tasks_that_retried": 1,
+                "recovery_rate": 1.0,
+            },
+        }
+    )
+    assert main(["cost", "r-cost", "--db", str(db_path)]) == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert abs(data["cost_usd"] - 0.02) < 1e-9
+    assert data["memory_tokens"] == 200
+    assert abs(data["memory_cost_usd"] - 0.00003) < 1e-9
+    assert abs(data["waste_cost_usd"] - 0.005) < 1e-9
+    assert data["recovery_rate"] == 1.0
+

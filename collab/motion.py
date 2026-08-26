@@ -20,8 +20,12 @@ from __future__ import annotations
 import threading
 import uuid
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
+import json
+import sqlite3
 from typing import Any
 
 _BUDGET_SOURCES = ("task", "global")
@@ -211,18 +215,62 @@ def merge_same_topic(motions: list[CollabMotion], *, topic_key: str = "topic") -
 
 
 class MotionStore:
-    """In-memory motion registry (single process; M3 will persist/expose).
+    """Motion registry (in-memory working set; optional SQLite persistence).
 
-    Thread-safe for the orchestrator's concurrent branches.
+    With a db_path the store hydrates from disk on init and persists every
+    mutation, so motions survive across CLI invocations (T18). Without a
+    db_path it is in-memory - the M2 behaviour, safe for in-process graph
+    branches.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        self.db_path = Path(db_path) if db_path else None
         self._motions: dict[str, CollabMotion] = {}
         self._lock = threading.Lock()
+        if self.db_path is not None:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._init_schema()
+            self._load_all()
+
+    @contextmanager
+    def _conn(self):
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def _init_schema(self) -> None:
+        with self._conn() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS motions (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+
+    def _load_all(self) -> None:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT data FROM motions").fetchall()
+        for row in rows:
+            try:
+                m = CollabMotion.from_dict(json.loads(str(row["data"])))
+                self._motions[m.id] = m
+            except Exception:
+                continue
+
+    def _save(self, motion: CollabMotion) -> None:
+        if self.db_path is None:
+            return
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO motions (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+                (motion.id, json.dumps(motion.to_dict(), ensure_ascii=False)),
+            )
 
     def add(self, motion: CollabMotion) -> CollabMotion:
         with self._lock:
             self._motions[motion.id] = motion
+            self._save(motion)
         return motion
 
     def get(self, motion_id: str) -> CollabMotion | None:
@@ -241,12 +289,17 @@ class MotionStore:
             motion = self._motions.get(motion_id)
             if motion is None:
                 raise ValueError("unknown motion id: " + motion_id)
-            return apply_decision(motion, **kwargs)
+            res = apply_decision(motion, **kwargs)
+            self._save(motion)
+            return res
 
     def merge_pending(self) -> list[CollabMotion]:
         with self._lock:
             motions = list(self._motions.values())
             merge_same_topic(motions)
+            for m in motions:
+                if m.status == MotionStatus.MERGED:
+                    self._save(m)
             return motions
 
 

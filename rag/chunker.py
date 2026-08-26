@@ -72,9 +72,11 @@ def _work_type_for_expert_file(expert_dir: Path, file_path: Path) -> str:
 
 def _source_file(path: Path, root_dir: Path) -> str:
     try:
-        return str(path.resolve().relative_to(root_dir.resolve()))
+        # T24: store source_file with POSIX separators so metadata/references are
+        # stable across platforms (Windows native str() uses backslashes).
+        return path.resolve().relative_to(root_dir.resolve()).as_posix()
     except ValueError:
-        return str(path.resolve())
+        return path.resolve().as_posix()
 
 
 def _source_kind_for_person_file(person_dir: Path, file_path: Path) -> str:

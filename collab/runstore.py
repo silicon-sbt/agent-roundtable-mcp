@@ -18,8 +18,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+
+DEFAULT_CRASH_GRACE_SECONDS = 120
 
 
 class RunStore:
@@ -52,6 +56,7 @@ class RunStore:
                     created_at TEXT NOT NULL,
                     finished_at TEXT,
                     stop_reason TEXT,
+                    last_heartbeat TEXT,
                     provider TEXT NOT NULL DEFAULT '',
                     mock INTEGER NOT NULL DEFAULT 0,
                     summary TEXT NOT NULL DEFAULT '{}'
@@ -59,6 +64,10 @@ class RunStore:
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
+            # T22 migration: add heartbeat column to stores created before it existed.
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()]
+            if "last_heartbeat" not in cols:
+                conn.execute("ALTER TABLE runs ADD COLUMN last_heartbeat TEXT")
 
     def save(self, record: dict[str, Any]) -> None:
         """Upsert a run record (summary is stored as JSON).
@@ -70,8 +79,8 @@ class RunStore:
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO runs (run_id, status, created_at, finished_at, stop_reason, provider, mock, summary)
-                VALUES (:run_id, :status, :created_at, :finished_at, :stop_reason, :provider, :mock, :summary)
+                INSERT INTO runs (run_id, status, created_at, finished_at, stop_reason, provider, mock, last_heartbeat, summary)
+                VALUES (:run_id, :status, :created_at, :finished_at, :stop_reason, :provider, :mock, :last_heartbeat, :summary)
                 ON CONFLICT(run_id) DO UPDATE SET
                     status=excluded.status, finished_at=excluded.finished_at,
                     stop_reason=excluded.stop_reason, summary=excluded.summary
@@ -82,11 +91,44 @@ class RunStore:
                     "created_at": str(record.get("created_at", "")),
                     "finished_at": record.get("finished_at"),
                     "stop_reason": record.get("stop_reason"),
+                    "last_heartbeat": record.get("last_heartbeat"),
                     "provider": str(record.get("provider", "")),
                     "mock": 1 if record.get("mock") else 0,
                     "summary": json.dumps(record.get("summary", {}), ensure_ascii=False),
                 },
             )
+
+    def touch(self, run_id: str, *, at: datetime | None = None) -> None:
+        """Record a heartbeat for a running run (T22 crash recovery)."""
+        ts = (at or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE runs SET last_heartbeat=? WHERE run_id=?",
+                (ts, str(run_id)),
+            )
+
+    def normalize_stale(self, *, crash_grace_seconds: int = DEFAULT_CRASH_GRACE_SECONDS) -> int:
+        """Mark still-running runs whose heartbeat expired as failed (T22).
+
+        A run is stale if it is still 'running' and its last heartbeat (or, if
+        none was ever recorded, its created_at) is older than crash_grace_seconds.
+        It is normalised to status=failed with a crash reason so it never stays
+        'running' forever after a crash/restart. Returns the number normalised.
+        """
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(seconds=crash_grace_seconds)).isoformat(timespec="seconds")
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT run_id FROM runs WHERE status=? AND COALESCE(last_heartbeat, created_at) < ?",
+                ("running", cutoff),
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    "UPDATE runs SET status='failed', finished_at=?, stop_reason='crashed (heartbeat expired)' "
+                    "WHERE run_id=?",
+                    (now.isoformat(timespec="seconds"), str(row["run_id"])),
+                )
+        return len(rows)
 
     def _row_to_record(self, row: sqlite3.Row) -> dict[str, Any]:
         try:
@@ -99,17 +141,20 @@ class RunStore:
             "created_at": str(row["created_at"]),
             "finished_at": row["finished_at"],
             "stop_reason": row["stop_reason"],
+            "last_heartbeat": row["last_heartbeat"],
             "provider": str(row["provider"]),
             "mock": bool(row["mock"]),
             "summary": summary,
         }
 
     def get(self, run_id: str) -> dict[str, Any] | None:
+        self.normalize_stale()
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
         return self._row_to_record(row) if row else None
 
     def list(self, *, status: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+        self.normalize_stale()
         sql = "SELECT * FROM runs"
         params: tuple[Any, ...] = ()
         if status is not None:
@@ -123,4 +168,4 @@ class RunStore:
             rows = conn.execute(sql, params).fetchall()
         return [self._row_to_record(r) for r in rows]
 
-__all__ = ["RunStore"]
+__all__ = ["RunStore", "DEFAULT_CRASH_GRACE_SECONDS"]

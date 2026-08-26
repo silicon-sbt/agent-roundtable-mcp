@@ -112,6 +112,7 @@ def build_audit(
     token_usage: int,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
+    memory_tokens: int = 0,
     provider: str = "",
     model: str = "",
     cost_usd: float = 0.0,
@@ -123,6 +124,11 @@ def build_audit(
 
     Use this in the executor (T3) so every DONE task carries a valid audit.
     """
+    # T23 adversarial hardening: a negative counter is a domain error and must be
+    # rejected (not silently clamped) - validate_audit's <0 rules would otherwise
+    # never fire because TaskAudit clamps to non-negative.
+    if token_usage < 0 or prompt_tokens < 0 or completion_tokens < 0 or cost_usd < 0:
+        raise ValueError("audit counters must be non-negative (token_usage/prompt_tokens/completion_tokens/cost_usd)")
     audit = TaskAudit(
         input_snapshot=input_snapshot,
         output_summary=output_summary,
@@ -130,6 +136,7 @@ def build_audit(
         token_usage=token_usage,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        memory_tokens=memory_tokens,
         provider=provider,
         model=model,
         cost_usd=cost_usd,

@@ -25,12 +25,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from .costing import cost_summary, feedback_summary, memory_summary, waste_breakdown
 from .graph import run_collab_sync
 from .models import Task
 from .runstore import RunStore
 
 _RUNS: dict[str, dict[str, Any]] = {}
 _LOCK = threading.Lock()
+
+_HEARTBEAT_INTERVAL_SECONDS = 10  # T22 heartbeat cadence
 
 
 def _new_run_id() -> str:
@@ -54,6 +57,9 @@ def run_collaboration(
     root_dir: Any = None,
     run_store: RunStore | None = None,
     mode: str = "wave",
+    memory_store: Any = None,
+    audit_llm: Any = None,
+    light: bool = False,
 ) -> str:
     """Start a collaboration on a background thread and return its run id.
 
@@ -89,12 +95,22 @@ def run_collaboration(
             "stop_reason": None,
             "provider": provider,
             "mock": mock,
+            "last_heartbeat": created,
             "summary": {"run_id": run_id, "status": "running", "created_at": created},
         })
 
+    _hb_stop = threading.Event()
+
+    def _heartbeat() -> None:
+        while not _hb_stop.wait(_HEARTBEAT_INTERVAL_SECONDS):
+            try:
+                run_store.touch(run_id)
+            except Exception:
+                pass
+
     def _worker() -> None:
         try:
-            state = run_collab_sync(parsed, provider=provider, mock=mock, root_dir=root_dir, mode=mode)
+            state = run_collab_sync(parsed, provider=provider, mock=mock, root_dir=root_dir, mode=mode, memory_store=memory_store, audit_llm=audit_llm, light=light)
             with _LOCK:
                 current = _RUNS.get(run_id)
                 if current is None:
@@ -137,9 +153,13 @@ def run_collaboration(
                         "mock": mock,
                         "summary": _build_summary(current),
                     })
+        finally:
+            _hb_stop.set()
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
+    if run_store is not None:
+        threading.Thread(target=_heartbeat, daemon=True).start()
     return run_id
 
 
@@ -167,6 +187,30 @@ def _build_summary(record: dict[str, Any]) -> dict[str, Any]:
         summary["token_total"] = state.get("token_total", 0)
         summary["overspend_tokens"] = _overspend_of(state)
         summary["final_report"] = state.get("final_report", "")
+        # T19: cost / waste / recovery (reuse the costing helpers).
+        results = state.get("results", [])
+        attempts = state.get("attempts", [])
+        cost = cost_summary(results)
+        if cost["total_usd"] > 0:
+            summary["cost_usd"] = cost["total_usd"]
+            summary["cost_priced_usd"] = cost["priced_usd"]
+            summary["cost_estimated_usd"] = cost["estimated_usd"]
+            summary["cost_by_persona"] = cost["per_persona"]
+        mem = memory_summary(results)
+        if mem["memory_tokens"] > 0:
+            summary["memory_tokens"] = mem["memory_tokens"]
+            summary["memory_cost_usd"] = mem["memory_cost_usd"]
+            summary["memory_share"] = mem["memory_share"]
+        waste = waste_breakdown(results, attempts)
+        if waste["waste_cost_usd"] > 0 or waste["waste_tokens"] > 0:
+            summary["waste_cost_usd"] = waste["waste_cost_usd"]
+            summary["waste_tokens"] = waste["waste_tokens"]
+            summary["waste_reasons"] = waste["waste_reasons"]
+        fb = feedback_summary(attempts, results)
+        if fb["tasks_that_retried"] > 0:
+            summary["retries_that_succeeded"] = fb["retries_that_succeeded"]
+            summary["tasks_that_retried"] = fb["tasks_that_retried"]
+            summary["recovery_rate"] = fb["recovery_rate"]
     return summary
 
 
@@ -191,6 +235,12 @@ def get_collab_status(run_id: str, *, run_store: RunStore | None = None) -> dict
                 "stop_reason": stored["stop_reason"],
             }
             base.update(stored["summary"])
+            # The persisted row is authoritative over the (possibly stale) digest's
+            # status/finished_at/stop_reason - a normalised crashed run must show
+            # as failed even if its stored summary still says "running".
+            base["status"] = stored["status"]
+            base["finished_at"] = stored["finished_at"]
+            base["stop_reason"] = stored["stop_reason"]
             return base
     return {"run_id": run_id, "status": "not_found", "error": "unknown run id"}
 

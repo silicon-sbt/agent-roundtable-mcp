@@ -74,6 +74,7 @@ class TaskAudit:
         "token_usage",
         "prompt_tokens",
         "completion_tokens",
+        "memory_tokens",
         "provider",
         "model",
         "cost_usd",
@@ -91,6 +92,7 @@ class TaskAudit:
         token_usage: int,
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
+        memory_tokens: int = 0,
         provider: str = "",
         model: str = "",
         cost_usd: float = 0.0,
@@ -104,6 +106,7 @@ class TaskAudit:
         self.token_usage = max(0, int(token_usage))
         self.prompt_tokens = max(0, int(prompt_tokens))
         self.completion_tokens = max(0, int(completion_tokens))
+        self.memory_tokens = max(0, int(memory_tokens))
         self.provider = provider
         self.model = model
         self.cost_usd = max(0.0, float(cost_usd))
@@ -119,6 +122,7 @@ class TaskAudit:
             "token_usage": self.token_usage,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
+            "memory_tokens": self.memory_tokens,
             "provider": self.provider,
             "model": self.model,
             "cost_usd": self.cost_usd,
@@ -226,6 +230,7 @@ class Task:
                     token_usage=int(audit_data.get("token_usage", 0)),
                     prompt_tokens=int(audit_data.get("prompt_tokens", 0) or 0),
                     completion_tokens=int(audit_data.get("completion_tokens", 0) or 0),
+                    memory_tokens=int(audit_data.get("memory_tokens", 0) or 0),
                     provider=str(audit_data.get("provider", "")),
                     model=str(audit_data.get("model", "")),
                     cost_usd=float(audit_data.get("cost_usd", 0.0) or 0.0),

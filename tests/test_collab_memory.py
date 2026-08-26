@@ -189,3 +189,25 @@ def test_no_memory_store_writes_nothing(tmp_path: Path):
     )
     results = {r["id"]: r for r in state["results"]}
     assert results["t-001"]["status"] == "done"
+
+
+def test_search_min_score_gate_no_strong_hit_no_injection(tmp_path: Path):
+    store = MemoryStore(tmp_path / "mem.db")
+    store.add(MemoryEntry(agent_id="computing", content="符号计算在推理中很关键", tags=["推理"]))
+    hits = store.search("computing", "符号计算 推理", min_score=0.0)
+    assert hits and hits[0].content == "符号计算在推理中很关键"
+    none = store.search("computing", "符号计算 推理", min_score=100.0)
+    assert none == []
+    assert build_memory_context([]) == ""
+    assert build_memory_context(none) == ""
+
+
+def test_search_candidate_limit_bounds_scan(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+    store = MemoryStore(tmp_path / "mem.db")
+    base = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    store.add(MemoryEntry(agent_id="computing", content="符号计算在推理中很关键", tags=["推理"], updated_at=base))
+    store.add(MemoryEntry(agent_id="computing", content="今天吃了苹果", tags=["饮食"], updated_at=base + timedelta(seconds=1)))
+    hits = store.search("computing", "符号计算 推理")
+    assert hits and hits[0].content == "符号计算在推理中很关键"
+    assert store.search("computing", "符号计算 推理", candidate_limit=1) == []

@@ -25,12 +25,13 @@ from typing import Annotated, Any, Callable, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from mcp_server.llm_client import resolve_llm
-from roundtable.loader import load_persona
+from .llm import resolve_llm
+from .persona import persona_hint
+from .tokenize import tokenize
 
 from .arbitration import hard_rules_check, manager_arbitrate
 from .audit import build_audit, render_summary_template
-from .costing import cost_summary, feedback_summary, price_tokens, rep_by_persona, waste_breakdown
+from .costing import cost_summary, feedback_summary, memory_summary, price_tokens, rep_by_persona, waste_breakdown
 from .models import CollabMessage, Task, TaskAudit, TaskStatus
 from .state_machine import TaskStateMachine
 from .memory import build_memory_context, memory_entries_from_output
@@ -131,16 +132,7 @@ def _build_task_prompt(
 
 def _persona_hint(persona_id: str, root_dir: Any) -> str:
     """Best-effort persona summary; falls back to the persona id."""
-    try:
-        persona = load_persona(persona_id, root_dir)
-        hint = persona.role
-        if persona.worldview:
-            hint += "；世界观：" + persona.worldview
-        if persona.speaking_style:
-            hint += "；风格：" + persona.speaking_style
-        return hint
-    except Exception:
-        return persona_id
+    return persona_hint(persona_id, root_dir)
 
 
 def _token_usage(llm: Any) -> int:
@@ -182,6 +174,7 @@ def _executor_node_factory(
         memory_context = ""
         if memory_store is not None:
             memory_context = build_memory_context(memory_store.search(task.persona_id, task.input))
+        memory_tokens = len(tokenize(memory_context)) if memory_context else 0
         prompt = _build_task_prompt(
             task,
             references=references,
@@ -214,6 +207,7 @@ def _executor_node_factory(
                 "token_usage": token_used,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
+                "memory_tokens": memory_tokens,
                 "cost_usd": cost_usd,
                 "provider": provider,
                 "model": model,
@@ -247,6 +241,7 @@ def _executor_node_factory(
                 token_usage=token_used,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                memory_tokens=memory_tokens,
                 provider=provider,
                 model=model,
                 cost_usd=cost_usd,
@@ -311,6 +306,7 @@ def _executor_node_factory(
                         "token_usage": _token_usage(llm),
                         "prompt_tokens": int((getattr(llm, "last_usage", None) or {}).get("prompt_tokens", 0) or 0),
                         "completion_tokens": int((getattr(llm, "last_usage", None) or {}).get("completion_tokens", 0) or 0),
+                        "memory_tokens": memory_tokens,
                         "cost_usd": price_tokens(
                             str(getattr(llm, "provider_name", "") or ""),
                             str(getattr(llm, "model", "") or ""),
@@ -572,6 +568,8 @@ def _arbitration_node_factory(
     *,
     root_dir: Any = None,
     memory_store: Any = None,
+    audit_llm: Any = None,
+    light: bool = False,
 ) -> Callable[[CollabState], dict[str, Any]]:
     """Build the arbitration node: hard rules + manager provisional for each
     DONE task without a verdict yet. Failing tasks are marked FAILED with the
@@ -596,6 +594,7 @@ def _arbitration_node_factory(
                     token_usage=int(audit_data.get("token_usage", 0)),
                     prompt_tokens=int(audit_data.get("prompt_tokens", 0) or 0),
                     completion_tokens=int(audit_data.get("completion_tokens", 0) or 0),
+                    memory_tokens=int(audit_data.get("memory_tokens", 0) or 0),
                     provider=str(audit_data.get("provider", "")),
                     model=str(audit_data.get("model", "")),
                     cost_usd=float(audit_data.get("cost_usd", 0.0) or 0.0),
@@ -612,7 +611,10 @@ def _arbitration_node_factory(
                 if isinstance(dep_audit, dict):
                     snapshot_ids.append(str(dep_audit.get("input_snapshot", dep_id)[:24]))
             hard = hard_rules_check(task, audit, snapshot_ids=snapshot_ids)
-            manager, manager_reason = manager_arbitrate(llm, task, audit, root_dir=root_dir)
+            if light:
+                manager, manager_reason = "pass", "轻量模式：跳过经理裁决（仅硬规则）"
+            else:
+                manager, manager_reason = manager_arbitrate(audit_llm or llm, task, audit, root_dir=root_dir)
             ok = hard.ok and manager == "pass"
             verdict = {
                 "task_id": task.id,
@@ -701,6 +703,9 @@ def _build_collab_report(
         est_persona = {k: "%.4f" % v for k, v in sorted(cost["estimated_persona"].items())}
         if est_persona:
             lines.append("- 其中估算按 Persona: " + "；".join(k + "=$" + v for k, v in est_persona.items()))
+    mem = memory_summary(list(results.values()))
+    if mem["memory_tokens"] > 0:
+        lines.append("- 记忆开销(USD): $%.4f（%d token，占总成本 %.3f）" % (mem["memory_cost_usd"], mem["memory_tokens"], mem["memory_share"]))
     waste = waste_breakdown(list(results.values()), attempts or [])
     if waste["waste_cost_usd"] > 0 or waste["waste_tokens"] > 0:
         lines.append("- 损耗(USD): $%.4f" % waste["waste_cost_usd"])
@@ -749,6 +754,8 @@ def build_collab_graph(
     *,
     root_dir: Any = None,
     memory_store: Any = None,
+    audit_llm: Any = None,
+    light: bool = False,
 ) -> Any:
     """Compile the mode-B execution graph.
 
@@ -763,7 +770,7 @@ def build_collab_graph(
     builder.add_node("execute_task", _executor_node_factory(llm, root_dir=root_dir, memory_store=memory_store))
     builder.add_node("blocker", _blocker_node)
     builder.add_node("budget_stop", _budget_stop_node)
-    builder.add_node("arbitrate", _arbitration_node_factory(llm, root_dir=root_dir, memory_store=memory_store))
+    builder.add_node("arbitrate", _arbitration_node_factory(llm, root_dir=root_dir, memory_store=memory_store, audit_llm=audit_llm, light=light))
     builder.add_node("collect", _collect_node)
     builder.add_edge(START, "manager")
     builder.add_conditional_edges(
@@ -798,6 +805,8 @@ def run_collab_sync(
     root_dir: Any = None,
     memory_store: Any = None,
     mode: str = "wave",
+    audit_llm: Any = None,
+    light: bool = False,
 ) -> dict[str, Any]:
     """Synchronous convenience entry (T7 will wrap this async).
 
@@ -811,7 +820,7 @@ def run_collab_sync(
     task_dicts = [task.to_dict() for task in tasks]
     eff_mode, experimental, parallel_note = resolve_mode(task_dicts, mode)
     llm = resolve_llm("mock" if mock else provider, root_dir=root_dir)
-    app = build_collab_graph(llm, root_dir=root_dir, memory_store=memory_store)
+    app = build_collab_graph(llm, root_dir=root_dir, memory_store=memory_store, audit_llm=audit_llm, light=light)
     initial: CollabState = {
         "tasks": task_dicts,
         "results": [],
