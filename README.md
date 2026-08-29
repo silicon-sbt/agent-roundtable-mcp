@@ -15,6 +15,12 @@
 
 你不需要懂 LangGraph 才能用它。把它理解成一个“可配置的专家圆桌工具”就可以。
 
+## 架构与流程
+
+![架构图](assets/architecture-cn.png)
+
+![圆桌流程图](assets/flow-cn.png)
+
 ## MCP 服务（Agent 集成）
 
 项目附带一个 **MCP 服务**（`mcp_server/`），让 DSH / Claude Desktop / Cursor 等 Agent 可以直接调用圆桌能力：

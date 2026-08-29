@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#f5f5f5;font-family:'Microsoft YaHei','Segoe UI',system-ui,sans-serif}
+svg{display:block}
+.rect{fill:#ececec;stroke:#bfc0c0;stroke-width:1.2}
+.diam{fill:rgba(235,108,54,0.10);stroke:#eb6c36;stroke-width:1.4}
+.oval{fill:#ececec;stroke:#bfc0c0;stroke-width:1.2}
+.rect.coral{fill:rgba(235,108,54,0.08);stroke:#eb6c36}
+.t{fill:#2d3142;font-size:12px;font-weight:600}
+.s{fill:#7a8399;font-size:9px;font-family:'Microsoft YaHei','Segoe UI',sans-serif}
+.eb{fill:#4f5d75;font-size:8px;letter-spacing:0.18em;font-weight:500;text-transform:uppercase;font-family:'Microsoft YaHei','Segoe UI',sans-serif}
+.arrow{stroke:#4f5d75;stroke-width:1.2;fill:none}
+.al{fill:#7a8399;font-size:9px;font-family:'Microsoft YaHei','Segoe UI',sans-serif}
+.arrowhead{fill:#4f5d75}
+</style></head><body>
+<svg width="960" height="600" viewBox="0 0 960 600">
+  <defs><marker id="af" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" class="arrowhead"/></marker></defs>
+
+  <text x="28" y="30" class="eb">流程 · Agent 圆桌</text>
+  <text x="28" y="56" class="t" style="font-size:17px">圆桌执行流程</text>
+  <text x="28" y="73" class="s">run_roundtable： 加载专家组 → 可选 RAG → 多轮 → 总结 → 报告</text>
+
+  <g class="arrow" marker-end="url(#af)">
+    <path d="M340,80 V96"/>
+    <path d="M340,134 V150"/>
+    <path d="M340,188 V204"/>
+    <path d="M340,242 V258"/>
+    <path d="M340,270 V270"/>
+    <path d="M465,330 H560 V223 H440"/>
+    <path d="M340,390 V430"/>
+    <path d="M340,466 V486"/>
+    <path d="M340,522 V518"/>
+  </g>
+
+  <ellipse class="oval" cx="340" cy="52" rx="90" ry="28"/>
+  <text x="302" y="57" class="t">run_roundtable</text>
+  <rect class="rect" x="240" y="96" width="200" height="38" rx="6"/>
+  <text x="262" y="120" class="t">加载专家组 / 角色</text>
+  <rect class="rect" x="240" y="150" width="200" height="38" rx="6"/>
+  <text x="272" y="174" class="t">检索知识(可选)</text>
+  <rect class="rect" x="240" y="204" width="200" height="38" rx="6"/>
+  <text x="262" y="228" class="t">轮次： 主持人 + 专家</text>
+  <rect class="rect" x="240" y="258" width="200" height="38" rx="6"/>
+  <text x="276" y="282" class="t">轮次小结</text>
+  <polygon class="diam" points="340,390 215,330 340,270 465,330"/>
+  <text x="306" y="334" class="t" style="fill:#b34d1f">还有轮次?</text>
+
+  <rect class="rect coral" x="240" y="430" width="200" height="38" rx="6"/>
+  <text x="278" y="454" class="t" style="fill:#b34d1f">最终总结</text>
+  <rect class="rect" x="240" y="486" width="200" height="38" rx="6"/>
+  <text x="272" y="510" class="t">保存 Markdown 报告</text>
+  <ellipse class="oval" cx="340" cy="546" rx="92" ry="28"/>
+  <text x="302" y="551" class="t">返回结果</text>
+
+  <text x="572" y="282" class="al">是</text>
+  <text x="354" y="410" class="al">否</text>
+
+</svg>
+</body></html>

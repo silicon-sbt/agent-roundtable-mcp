@@ -20,7 +20,7 @@ from roundtable.loader import PROJECT_ROOT, load_council, load_council_personas,
 from roundtable.logger import save_markdown_log
 from roundtable.state import Persona
 
-from .llm_client import resolve_llm
+from .llm_client import load_agent_credential, resolve_llm
 
 ProgressCallback = Callable[[dict], None]
 
@@ -369,6 +369,22 @@ def run_roundtable_impl(
     rounds = int(rounds)
     if rounds < 1 or rounds > 10:
         raise ValueError("rounds must be between 1 and 10")
+
+    # API-alignment guard: guarantee the MCP and the requesting agent use the SAME
+    # api. A real (non-mock) roundtable must be given the caller's api_key/base_url
+    # so it never silently falls back to a .env key that may differ from the agent.
+    dsh_aligned = (not mock) and load_agent_credential(root)
+    if not mock and not (api_key or base_url) and not dsh_aligned:
+        return {
+            "ok": False,
+            "need_api_key": True,
+            "provider": provider or "auto",
+            "message": (
+                "为保证 MCP 与请求方 agent 使用同一 API，请传入 provider + api_key（或 base_url）。"
+                "当前未提供，MCP 不会静默改用 .env 中可能不一致的 key。"
+            ),
+            "hint": "从你（agent）正在使用的模型配置取得 provider、api_key、base_url 后传入；要离线演示可用 mock=true。",
+        }
 
     llm = resolve_llm(
         provider if not mock else "mock",

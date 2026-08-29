@@ -44,6 +44,47 @@ def load_env_files(root_dir: Path | str) -> None:
             os.environ[key] = value
 
 
+def load_agent_credential(root_dir: Path | str | None = None) -> bool:
+    """Detect an OpenAI-compatible credential so the MCP aligns with the MCP client.
+
+    Alignment means the roundtable uses the SAME api as the requesting agent.
+    Detection order (client-agnostic):
+      1. Provider keys already in the client env (DeepSeek / OpenAI / OpenRouter /
+         Gemini) - covers clients like Claude Code / Cursor that export their key to
+         the MCP subprocess. The repo's own .env key is ignored (it is not the
+         agent's key).
+      2. DSH's own credential (~/.dsh/.credentials.yaml, provider deepseek-official).
+
+    Returns True when an OpenAI-compatible api key is available for the roundtable;
+    else False, and a real run should ask the caller to pass api_key/base_url.
+    """
+    client_key_envs = [
+        "DEEPSEEK_API_KEY", "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY_1", "OPENROUTER_API_KEY_2",
+        "GEMINI_API_KEY_1", "GEMINI_API_KEY_2",
+    ]
+    # Snapshot the client env BEFORE loading the repo .env, so a repo .env key
+    # (the roundtable's own, not the agent's) never counts as "aligned".
+    client_keys = {name: os.getenv(name, "").strip() for name in client_key_envs}
+    if root_dir is not None:
+        load_env_files(root_dir)
+    for name in AUTO_ORDER:
+        spec = PROVIDER_SPECS[name]
+        if any(client_keys.get(k) for k in spec.api_key_envs):
+            return True
+    path = Path(os.path.expanduser("~/.dsh/.credentials.yaml"))
+    if not path.exists():
+        return False
+    try:
+        raw = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False
+    match = re.search(r"DEEPSEEK_API_KEY\s*:\s*['\"]?([A-Za-z0-9._\-]{12,})", raw)
+    if not match:
+        return False
+    os.environ["DEEPSEEK_API_KEY"] = match.group(1)
+    return True
+
 # ---------------------------------------------------------------------------
 # Provider registry
 # ---------------------------------------------------------------------------
@@ -270,6 +311,7 @@ __all__ = [
     "ProviderSpec",
     "PROVIDER_SPECS",
     "AUTO_ORDER",
+    "load_agent_credential",
     "load_env_files",
     "provider_status",
     "resolve_llm",

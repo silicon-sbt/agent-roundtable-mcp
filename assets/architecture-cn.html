@@ -1,0 +1,74 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#f5f5f5;font-family:'Microsoft YaHei','Segoe UI',system-ui,sans-serif}
+svg{display:block}
+.node{fill:#ececec;stroke:#bfc0c0;stroke-width:1.2}
+.node.core{fill:rgba(235,108,54,0.08);stroke:#eb6c36}
+.t{fill:#2d3142;font-size:12px;font-weight:600}
+.s{fill:#7a8399;font-size:9px;font-family:'Microsoft YaHei','Segoe UI',sans-serif}
+.eb{fill:#4f5d75;font-size:8px;letter-spacing:0.18em;font-weight:500;text-transform:uppercase;font-family:'Microsoft YaHei','Segoe UI',sans-serif}
+.zone{fill:rgba(45,49,66,0.04);stroke:rgba(45,49,66,0.12);stroke-dasharray:4,3}
+.arrow{stroke:#4f5d75;stroke-width:1.2;fill:none}
+.arrowhead{fill:#4f5d75}
+</style></head><body>
+<svg width="960" height="600" viewBox="0 0 960 600">
+  <defs><marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" class="arrowhead"/></marker></defs>
+
+  <text x="28" y="30" class="eb">架构 · Agent 圆桌</text>
+  <text x="28" y="56" class="t" style="font-size:17px">Agent 圆桌 MCP</text>
+  <text x="28" y="73" class="s">FastMCP stdio 服务 · 专家圆桌 · RAG · OpenAI 兼容 LLM</text>
+
+  <rect class="zone" x="40" y="88" width="880" height="74" rx="8"/>
+  <text x="52" y="106" class="eb">入口</text>
+  <rect class="zone" x="40" y="178" width="880" height="82" rx="8"/>
+  <text x="52" y="196" class="eb">工具</text>
+  <rect class="zone" x="40" y="276" width="880" height="86" rx="8"/>
+  <text x="52" y="294" class="eb">核心</text>
+  <rect class="zone" x="40" y="378" width="880" height="190" rx="8"/>
+  <text x="52" y="396" class="eb">支撑 · 输出</text>
+
+  <g class="arrow" marker-end="url(#ah)">
+    <path d="M480,152 V178"/>
+    <path d="M160,218 V276"/>
+    <path d="M360,218 V276"/>
+    <path d="M560,218 V276"/>
+    <path d="M760,218 V276"/>
+    <path d="M480,322 V360 H180 V404"/>
+    <path d="M480,322 V360 H460 V404"/>
+    <path d="M480,322 V360 H760 V404"/>
+    <path d="M180,444 V470"/>
+    <path d="M460,444 V470"/>
+    <path d="M740,444 V470"/>
+  </g>
+
+  <rect class="node" x="360" y="108" width="240" height="44" rx="8"/>
+  <text x="392" y="135" class="t">MCP 服务 · FastMCP · stdio</text>
+
+  <rect class="node" x="70" y="218" width="180" height="40" rx="8"/>
+  <text x="86" y="243" class="t" style="font-size:11px">run_roundtable</text>
+  <rect class="node" x="270" y="218" width="180" height="40" rx="8"/>
+  <text x="298" y="243" class="t" style="font-size:11px">plan_council</text>
+  <rect class="node" x="470" y="218" width="180" height="40" rx="8"/>
+  <text x="486" y="243" class="t" style="font-size:11px">search_knowledge</text>
+  <rect class="node" x="670" y="218" width="180" height="40" rx="8"/>
+  <text x="686" y="243" class="t" style="font-size:11px">provider_info</text>
+
+  <rect class="node core" x="360" y="296" width="240" height="52" rx="8"/>
+  <text x="398" y="319" class="t" style="fill:#b34d1f">圆桌图</text>
+  <text x="388" y="335" class="s">run_roundtable_impl · 核心</text>
+
+  <rect class="node" x="70" y="404" width="220" height="40" rx="8"/>
+  <text x="112" y="429" class="t">专家组 / 角色</text>
+  <rect class="node" x="340" y="404" width="240" height="40" rx="8"/>
+  <text x="362" y="429" class="t">RAG · 知识语料</text>
+  <rect class="node" x="640" y="404" width="220" height="40" rx="8"/>
+  <text x="672" y="429" class="t">LLM · OpenAI 兼容</text>
+
+  <rect class="node" x="70" y="470" width="250" height="40" rx="8"/>
+  <text x="96" y="495" class="t">凭据对齐(env/DSH)</text>
+  <rect class="node" x="380" y="470" width="240" height="40" rx="8"/>
+  <text x="404" y="495" class="t">Markdown 报告 → logs/</text>
+  <rect class="node" x="680" y="470" width="180" height="40" rx="8"/>
+  <text x="702" y="495" class="t">列表 / 读取报告</text>
+
+</svg>
+</body></html>

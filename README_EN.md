@@ -13,6 +13,12 @@ This project is useful if you want to:
 
 You do not need to understand LangGraph to use this project. Think of it as a configurable expert roundtable that runs on your own machine.
 
+## Architecture & Flow
+
+![Architecture](assets/architecture.png)
+
+![Roundtable flow](assets/flow.png)
+
 ## What It Can Do
 
 - Run a roundtable from the command line or from a local web UI.
