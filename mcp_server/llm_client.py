@@ -62,6 +62,7 @@ def load_agent_credential(root_dir: Path | str | None = None) -> bool:
         "DEEPSEEK_API_KEY", "OPENAI_API_KEY",
         "OPENROUTER_API_KEY_1", "OPENROUTER_API_KEY_2",
         "GEMINI_API_KEY_1", "GEMINI_API_KEY_2",
+        "ANTHROPIC_API_KEY",
     ]
     # Snapshot the client env BEFORE loading the repo .env, so a repo .env key
     # (the roundtable's own, not the agent's) never counts as "aligned".
@@ -126,9 +127,15 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         api_key_envs=("GEMINI_API_KEY_1", "GEMINI_API_KEY_2"),
         default_model="gemini-2.0-flash",
     ),
+    "anthropic": ProviderSpec(
+        name="anthropic",
+        base_url=os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+        api_key_envs=("ANTHROPIC_API_KEY",),
+        default_model="claude-sonnet-4-20250514",
+    ),
 }
 
-AUTO_ORDER = ("deepseek", "openai", "openrouter", "gemini")
+AUTO_ORDER = ("deepseek", "openai", "openrouter", "gemini", "anthropic")
 
 
 def _first_key(spec: ProviderSpec) -> str | None:
@@ -220,6 +227,95 @@ class OpenAICompatLLM:
 
 
 
+class AnthropicLLM:
+    """Anthropic Messages API client (Claude Code / Claude native).
+
+    Not OpenAI-compatible: /v1/messages, x-api-key + anthropic-version headers, and
+    input_tokens/output_tokens usage. Exposes the same LLMClient protocol so the
+    roundtable can align with Claude Code.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        provider_name: str = "anthropic",
+        temperature: float = 0.7,
+        max_output_tokens: int = 4096,
+        timeout: float = 180.0,
+        max_retries: int = 2,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.provider_name = provider_name
+        self.temperature = temperature
+        self.max_output_tokens = max_output_tokens
+        self.timeout = timeout
+        self.max_retries = max(1, int(max_retries))
+        self.last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    def generate(self, prompt: str) -> str:
+        url = self.base_url + "/v1/messages"
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": self.max_output_tokens,
+            "temperature": self.temperature,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            except requests.RequestException as exc:
+                if attempts >= self.max_retries:
+                    raise RuntimeError("LLM request to " + url + " failed: " + str(exc)) from exc
+                continue
+            if response.status_code != 200:
+                if attempts < self.max_retries and response.status_code in (429, 500, 502, 503, 504):
+                    continue
+                raise RuntimeError("LLM API error %s from %s: %s" % (response.status_code, self.provider_name, response.text[:300]))
+            try:
+                data = response.json()
+                usage = data.get("usage") or {}
+                imp = int(usage.get("input_tokens", 0))
+                out = int(usage.get("output_tokens", 0))
+                self.last_usage = {"prompt_tokens": imp, "completion_tokens": out, "total_tokens": imp + out}
+                text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+                return text.strip()
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise RuntimeError("Unexpected LLM API response from %s: %s" % (self.provider_name, response.text[:300])) from exc
+
+
+def _build_client(
+    spec: ProviderSpec,
+    key: str,
+    *,
+    base_url: str,
+    model: str,
+    temperature: float,
+    max_output_tokens: int,
+) -> LLMClient:
+    """Anthropic is not OpenAI-compatible; dispatch the right client."""
+    if spec.name == "anthropic":
+        return AnthropicLLM(
+            api_key=key, base_url=base_url, model=model, provider_name=spec.name,
+            temperature=temperature, max_output_tokens=max_output_tokens,
+        )
+    return OpenAICompatLLM(
+        api_key=key, base_url=base_url, model=model, provider_name=spec.name,
+        temperature=temperature, max_output_tokens=max_output_tokens,
+    )
+
+
 def resolve_llm(
     provider: str = "auto",
     *,
@@ -243,11 +339,10 @@ def resolve_llm(
             spec = PROVIDER_SPECS[name]
             key = api_key or _first_key(spec)
             if key:
-                return OpenAICompatLLM(
-                    api_key=key,
+                return _build_client(
+                    spec, key,
                     base_url=base_url or spec.base_url,
                     model=model or spec.default_model,
-                    provider_name=name,
                     temperature=temperature,
                     max_output_tokens=max_output_tokens,
                 )
@@ -262,11 +357,10 @@ def resolve_llm(
                 "Provider " + repr(selected) + " needs a key. Set " + env_names
                 + " in .env or pass api_key.",
             )
-        return OpenAICompatLLM(
-            api_key=key,
+        return _build_client(
+            spec, key,
             base_url=base_url or spec.base_url,
             model=model or spec.default_model,
-            provider_name=spec.name,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
         )
@@ -308,6 +402,7 @@ def provider_status(root_dir: Path | str | None = None) -> list[dict[str, Any]]:
 
 __all__ = [
     "OpenAICompatLLM",
+    "AnthropicLLM",
     "ProviderSpec",
     "PROVIDER_SPECS",
     "AUTO_ORDER",
