@@ -29,6 +29,7 @@ You do not need to understand LangGraph to use this project. Think of it as a co
 - Rotate speaking order each round to reduce fixed-seat bias.
 - Save every run to `logs/`.
 - Run in `--mock` mode when you do not have API keys yet.
+- The MCP server can use `provider=anthropic` for Claude Code natively (Messages API), and auto-detects the API key of DSH / Claude Code / Cursor so the roundtable uses the SAME API as the requesting agent.
 
 The project currently includes three built-in councils:
 

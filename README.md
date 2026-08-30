@@ -27,6 +27,7 @@
 
 - 调研时用 `search_knowledge` 检索本地专家语料，`list_agents` / `get_agent` 查看可用专家。
 - 调研后用 `run_roundtable` 召集专家圆桌讨论，把调研发现通过 `context` 注入专家组，输出总结与 Markdown 报告。
+- `run_roundtable` 支持 `provider`：`deepseek` / `openai` / `openrouter` / `gemini` / **`anthropic`（Claude Code 原生，Messages API）**。MCP 会自动识别 DSH / Claude Code / Cursor 等客户端的 key（`load_agent_credential`），或由调用方传 `api_key` / `base_url`。
 
 ```bash
 .venv\Scripts\python -m pip install -r requirements-mcp.txt
