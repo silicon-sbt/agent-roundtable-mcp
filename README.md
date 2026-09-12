@@ -651,6 +651,10 @@ python -m json.tool config/agent_llms.json >/dev/null
 python -m streamlit run ui/app.py
 ```
 
+## 相关项目
+
+- [`v2-collaboration-engine`](https://github.com/silicon-sbt/v2-collaboration-engine)：**入口 B · 公司** —— 弱去中心化多 Agent 协作工作流引擎（波次调度 / 审计 / 仲裁 / 记忆 / 成本·损耗闭环，`python -m collab`）。本仓库是 **入口 A · 会议**（圆桌 MCP）。
+
 ## 项目设计原则
 
 - Agent 的长期人设放在 YAML。

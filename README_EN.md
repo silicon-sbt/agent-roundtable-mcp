@@ -420,6 +420,10 @@ Launch the UI separately when changing Streamlit behavior:
 python -m streamlit run ui/app.py
 ```
 
+## See also
+
+- [`v2-collaboration-engine`](https://github.com/silicon-sbt/v2-collaboration-engine): **Entry B · Company** — a weak-decentralized multi-agent collaboration workflow engine (wave scheduling / audit / arbitration / memory / cost-loss loop, `python -m collab`). This repo is **Entry A · Meeting** (the roundtable MCP).
+
 ## Design Principles
 
 - Long-term persona in YAML.
