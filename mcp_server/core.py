@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from rag.config import discover_corpora
 from rag.retriever import format_retrieved_context, get_retriever, source_files
+from roundtable.agency_library import agency_persona_spec, list_cards, library_meta
 from roundtable.discovery import discover_configured_agent_ids
 from roundtable.graph import build_roundtable_graph, run_roundtable
 from roundtable.loader import PROJECT_ROOT, load_council, load_council_personas, load_persona
@@ -65,9 +66,35 @@ def list_councils_impl(root_dir: Path | str | None = None) -> list[dict[str, Any
     return councils
 
 
-def list_agents_impl(root_dir: Path | str | None = None) -> list[dict[str, Any]]:
-    """List all configured expert personas (domain experts + persona inspired)."""
+def list_agents_impl(root_dir: Path | str | None = None, source: str = "") -> list[dict[str, Any]]:
+    """List configured expert personas, or the optional built-in role library.
+
+    Default (source="") keeps the historical behaviour: the personas configured in
+    config/domain_experts + config/persona_inspired. Passing source="agency" or
+    "agency:<department>" instead lists the built-in agency library cards, which are
+    only used when the caller explicitly adds one via add_personas.
+    """
     root = _root(root_dir)
+    requested = str(source or "").strip()
+    if requested:
+        kind, _, department = requested.partition(":")
+        if kind.strip().lower() != "agency":
+            raise ValueError("source must be empty or 'agency[:department]', got '" + requested + "'")
+        cards = list_cards(department=department.strip())
+        meta = library_meta()
+        return [
+            {
+                "agency_id": card.get("id"),
+                "name": card.get("name"),
+                "role": card.get("role"),
+                "department": card.get("department"),
+                "strengths": list(card.get("strengths") or []),
+                "source": meta.get("source", ""),
+                "license": meta.get("license", ""),
+                "usage": 'pass {"agency_id": "<agency_id>"} in add_personas',
+            }
+            for card in cards
+        ]
     agents: list[dict[str, Any]] = []
     for agent_id in discover_configured_agent_ids(root):
         try:
@@ -192,6 +219,11 @@ def apply_persona_changes(
     for spec in _parse_persona_list(add_personas, "add_personas"):
         if not isinstance(spec, dict):
             raise ValueError("add_personas entries must be objects")
+        # Opt-in: a library card may be added by id alone; explicit fields still win.
+        if str(spec.get("agency_id", "")).strip():
+            expanded = agency_persona_spec(str(spec["agency_id"]))
+            spec = {**expanded, **{k: v for k, v in spec.items() if k not in ("agency_id",) and v not in ("", None)},
+                    "agency_id": expanded["agency_id"]}
         name = str(spec.get("name", "")).strip()
         role = str(spec.get("role", "")).strip()
         if not name or not role:
@@ -301,6 +333,10 @@ def plan_council_impl(
         "如需补充视角：调用 run_roundtable 时传 add_personas（JSON 数组，每项至少含 name 和 role，可带 worldview / speaking_style / strengths / weaknesses / catchphrases / rag_expert_name / profile）。",
         "如需调整现有专家：传 adjust_personas（JSON 数组，每项含 id 与要覆盖的字段，如 role / worldview / speaking_style）。",
         "可用 list_agents 查看已有专家模板，用 search_knowledge 查本地语料判断视角缺口。",
+        "内置角色库（可选、默认不参与圆桌）：" + str(library_meta().get("imported_roles", 0))
+        + " 个即时可用角色（21 个部门，来源 agency-agents-zh，MIT）。"
+        + "用 list_agents(source=\"agency\") 或 list_agents(source=\"agency:engineering\") 浏览；"
+        + "想加入某位，传 add_personas=[{\"agency_id\": \"<id>\"}] 即可，不传则圆桌阵容保持原样。",
         "提示：若你给 council 新增/调整了专家，请记得为这些专家补充语料（person_crawl_agent / knowledge/），否则其知识库可能为空、讨论会缺依据。",
     ]
     return {

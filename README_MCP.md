@@ -123,11 +123,30 @@ claude mcp list    # 应显示 √ Connected
 | `api_key` | 空 | 显式 key（默认从 `.env` 读） |
 | `base_url` | 空 | 自定义 OpenAI 兼容端点 |
 | `context` | 空 | 调研发现/背景资料，注入为第 0 轮消息供专家组参考 |
-| `add_personas` | 空 | JSON 数组字符串，新增专家（每项至少含 `name` 和 `role`） |
+| `add_personas` | 空 | JSON 数组字符串，新增专家（每项至少含 `name` 和 `role`；也可用 `{"agency_id": "<id>"}` 引用内置角色库，见下文） |
 | `adjust_personas` | 空 | JSON 数组字符串，调整现有专家（每项含 `id` 与要覆盖的字段） |
 | `output_dir` | `logs` | 报告输出目录 |
 | `temperature` | `0.7` | 生成温度 |
 | `max_output_tokens` | `4096` | 单次生成上限 |
+
+#### 内置角色库（可选，默认完全不参与圆桌）
+
+仓库内置 **320 个即用角色卡 / 21 个部门**，来自 [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh)（MIT，署名见 `NOTICE`），
+已确定性压缩成精简卡片（name / role / worldview / strengths / style）。
+
+**要不要用由调用方决定**：不显式加入时，圆桌阵容与行为跟以前完全一样。
+
+- 浏览：`list_agents(source="agency")`；按部门：`list_agents(source="agency:engineering")`
+- 加入某位：`run_roundtable(..., add_personas='[{"agency_id": "academic_historian"}]')`
+  同一项里还可以覆盖字段，例如 `[{"agency_id": "academic_historian", "name": "历史顾问", "role": "只谈史料与年代"}]`
+- 未加时：`config/agency_personas.json` 存在与否都不影响默认圆桌
+
+刷新角色库（上游更新后重跑）：
+
+```bash
+git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git
+python scripts/import_agency_personas.py --agency-root ./agency-agents-zh
+```
 
 ## 典型使用流程
 

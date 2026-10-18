@@ -1,0 +1,29 @@
+# Third-party notices
+
+This project ships one data artifact derived from a third-party MIT-licensed library.
+
+## agency-agents-zh
+
+- Source: https://github.com/jnMetaCode/agency-agents-zh
+- Upstream: https://github.com/msitarzewski/agency-agents
+- License: MIT
+- Copyright (c) 2025 Michael Sitarzewski (original English version)
+- Copyright (c) 2026 jnMetaCode (Chinese translation and localization)
+
+`config/agency_personas.json` contains **compact role cards** extracted deterministically from
+those role definitions (name / role / worldview / strengths / style). The upstream long-form role
+files are **not** vendored; only the extracted cards are included, under the MIT terms above with
+the copyright notices retained.
+
+The cards are an **opt-in** library: no council uses them unless the caller explicitly adds one
+via run_roundtable `add_personas=[{"agency_id": "<id>"}]`.
+
+To refresh:
+
+```bash
+git clone --depth 1 https://github.com/jnMetaCode/agency-agents-zh.git
+python scripts/import_agency_personas.py --agency-root ./agency-agents-zh
+```
+
+Deleting `config/agency_personas.json` simply disables the library; the MCP keeps working and
+`list_agents(source="agency")` returns an empty list.

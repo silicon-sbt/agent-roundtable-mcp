@@ -55,10 +55,15 @@ def create_server(root_dir: Path | str | None = None) -> FastMCP:
 
     @mcp.tool(
         title="List expert agents",
-        description="List all configured expert personas (domain experts and persona-inspired agents).",
+        description=(
+            "List all configured expert personas (domain experts and persona-inspired agents). "
+            'Pass source="agency" (or "agency:<department>", e.g. "agency:engineering") to browse the '
+            "optional built-in role library (agency-agents-zh, MIT, ~320 roles) instead; library roles "
+            'are NOT part of any council unless you add one via run_roundtable add_personas=[{"agency_id": "<id>"}].'
+        ),
     )
-    def list_agents() -> list[dict[str, Any]]:
-        return list_agents_impl(root)
+    def list_agents(source: str = "") -> list[dict[str, Any]]:
+        return list_agents_impl(root, source)
 
     @mcp.tool(
         title="Get agent profile",
@@ -104,7 +109,7 @@ def create_server(root_dir: Path | str | None = None) -> FastMCP:
 
     @mcp.tool(
         title="Run agent roundtable",
-        description="Hold a multi-agent roundtable discussion on a topic. Call plan_council first to review the lineup; then optionally customise it here: add_personas appends new experts (JSON array, each with name + role and optional worldview/speaking_style/strengths/weaknesses/catchphrases/profile), adjust_personas patches existing ones (JSON array, each with id + fields to override). Expert agents speak in turn under a moderator; the service produces a structured final summary and a Markdown report in logs/. Pass your research findings in the context parameter so the panel explicitly discusses them. Use mock=true for an offline demo, or set provider (deepseek/openai/openrouter/gemini/anthropic/custom) with keys from .env. Real (non-mock) runs must pass the caller's api_key/base_url so the MCP and the requesting agent use the SAME api; otherwise it returns need_api_key. mock=true for offline demo.",
+        description="Hold a multi-agent roundtable discussion on a topic. Call plan_council first to review the lineup; then optionally customise it here: add_personas appends new experts (JSON array, each with name + role and optional worldview/speaking_style/strengths/weaknesses/catchphrases/profile; an entry may instead be a dict with a single agency_id key to use a built-in role-library card; browse ids with list_agents(source='agency')), adjust_personas patches existing ones (JSON array, each with id + fields to override). Expert agents speak in turn under a moderator; the service produces a structured final summary and a Markdown report in logs/. Pass your research findings in the context parameter so the panel explicitly discusses them. Use mock=true for an offline demo, or set provider (deepseek/openai/openrouter/gemini/anthropic/custom) with keys from .env. Real (non-mock) runs must pass the caller's api_key/base_url so the MCP and the requesting agent use the SAME api; otherwise it returns need_api_key. mock=true for offline demo.",
     )
     async def run_roundtable(
         ctx: Context,
