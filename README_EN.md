@@ -433,3 +433,18 @@ python -m streamlit run ui/app.py
 - Knowledge split into `experts/` (domain long-form) and `people/` (person multi-source).
 - Start with `keyword` RAG before heavier embeddings.
 - CLI and UI share the same runtime path.
+
+## Acknowledgements
+
+- The original [`agent_roundtable`](https://github.com/Random-Walk2026/agent_roundtable) project (Random-Walk2026 / Lamjinlab): this fork adds the MCP server wrapper on top of it.
+- [`agency-agents-zh`](https://github.com/jnMetaCode/agency-agents-zh) (jnMetaCode) and the upstream
+  [`agency-agents`](https://github.com/msitarzewski/agency-agents) (Michael Sitarzewski): the 320 role cards in
+  the optional built-in library are deterministically extracted from their MIT-licensed role definitions — see `NOTICE`.
+
+## Support this project
+
+If this saved you time, you can buy me a coffee — no strings attached:
+
+<p align="center">
+  <img src="assets/donation-qr.jpg" alt="WeChat tip QR" width="240">
+</p>

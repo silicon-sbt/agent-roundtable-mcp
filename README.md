@@ -664,3 +664,16 @@ python -m streamlit run ui/app.py
 - 知识库分 `experts/`（领域长文）和 `people/`（人物多来源）两层。
 - 先用 `keyword` RAG 跑通，再考虑更复杂的 embedding。
 - CLI 和 UI 共用同一条运行链路，避免两套逻辑不一致。
+
+## 致谢
+
+- 感谢原始项目 [`agent_roundtable`](https://github.com/Random-Walk2026/agent_roundtable)（Random-Walk2026 / Lamjinlab）：本项目在其基础上增加了 MCP 服务封装。
+- 感谢 [`agency-agents-zh`](https://github.com/jnMetaCode/agency-agents-zh)（jnMetaCode）与上游 [`agency-agents`](https://github.com/msitarzewski/agency-agents)（Michael Sitarzewski）：可选内置角色库的 320 张角色卡由其 MIT 授权的中文角色定义确定性提取而来，详见 `NOTICE`。
+
+## 支持这个项目
+
+如果这些工作帮你省了时间，欢迎请我喝杯咖啡 ☕（不打赏也照样用，没人会因此少拿到什么）
+
+<p align="center">
+  <img src="assets/donation-qr.jpg" alt="微信赞赏码" width="240">
+</p>
