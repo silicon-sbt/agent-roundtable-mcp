@@ -37,6 +37,18 @@ The project currently includes three built-in councils:
 - `persona_inspired`: Buffett-, Munger-, Dalio-, Hayek-inspired style agents, plus Desmond Shum with multi-source corpus.
 - `china_debt`: mixed council of macroeconomics + Desmond Shum + history for debt and balance-sheet discussions.
 
+### Built-in role library (optional — never on the table by default)
+
+The repo also ships **320 ready-made role cards across 21 departments** (engineering, marketing,
+security, finance, academic, ...), extracted from [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh) (MIT, attribution in `NOTICE`) and
+compacted deterministically into small cards (name / role / worldview / strengths / style).
+
+**No council uses them unless the caller asks for it:**
+
+- Browse: `list_agents(source="agency")`, or one department: `list_agents(source="agency:engineering")`
+- Add one: `run_roundtable(..., add_personas='[{"agency_id": "academic_historian"}]')` (fields can be overridden in the same entry)
+- Do nothing: the council lineup and behaviour stay exactly as before; deleting `config/agency_personas.json` only removes the library
+
 ## 3-Minute Quick Start
 
 Use Python 3.10+ and install dependencies in an isolated virtual environment:
@@ -216,6 +228,7 @@ agent_roundtable/
 │   ├── agents.py            # What each agent does when speaking
 │   ├── agent_llm_config.py  # Read/write config/agent_llms.json
 │   ├── loader.py            # Load domain_experts / persona_inspired / councils
+│   ├── agency_library.py    # Optional built-in role library (agency-agents-zh, MIT)
 │   ├── discovery.py         # Auto-discover configured agents and knowledge dirs
 │   ├── epistemics.py        # Epistemic tags: local corpus / style-only / verify online
 │   ├── order.py             # Rotate speaking order across rounds
@@ -230,6 +243,7 @@ agent_roundtable/
 │   ├── domain_experts/      # Mainline experts: experts corpora
 │   ├── persona_inspired/    # Persona agents: style-only or people corpora
 │   ├── councils/            # Which agents sit at the table
+│   ├── agency_personas.json # Optional role-library data (320 cards, see NOTICE)
 │   ├── agent_llms.json
 │   └── model_example.json   # Complete gateway-generated model snapshot
 ├── knowledge/               # Local corpora (not committed to Git)
@@ -237,12 +251,14 @@ agent_roundtable/
 │   └── people/              # Multi-source person corpora: book / x / news / report
 ├── scripts/
 │   ├── parse_twitter_jsonl.py
-│   └── import_person_source.py
+│   ├── import_person_source.py
+│   └── import_agency_personas.py  # refresh the built-in role library
 ├── rag/
 ├── vector_db/chroma/
 ├── logs/
 ├── tests/
 ├── requirements.txt
+├── NOTICE                   # third-party attribution (role-library source)
 └── .env.example
 ```
 
@@ -381,6 +397,10 @@ Mainline `experts`:
 Mixed `china_debt`: `macroeconomics` + `desmond_shum` + `history`.
 
 "Style-inspired" does not impersonate the real person or claim to represent their views.
+
+> The experts above are what ships **in the default councils**. There is also an optional library of
+> **320 roles** (engineering / marketing / security / finance / academic ...) that never sits at the table
+> unless you add it — see "Built-in role library" above.
 
 ## Common CLI Usage
 

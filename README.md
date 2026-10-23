@@ -36,6 +36,16 @@
 
 详见 [README_MCP.md](README_MCP.md)。
 
+### 内置角色库（可选，默认不上桌）
+
+仓库内置 **320 个即用角色卡 / 21 个部门**（工程、营销、安全、金融、学术…），来源 [agency-agents-zh](https://github.com/jnMetaCode/agency-agents-zh)（MIT，署名见 `NOTICE`），已确定性压缩成精简卡（姓名 / 角色 / 世界观 / 擅长 / 风格）。
+
+**它不会自动进入任何圆桌**——用不用由调用方决定：
+
+- 浏览：`list_agents(source="agency")`，按部门：`list_agents(source="agency:engineering")`
+- 加入某位：`run_roundtable(..., add_personas='[{"agency_id": "academic_historian"}]')`，可在同一项里覆盖字段
+- 不加：圆桌阵容与行为跟以前完全一致；删掉 `config/agency_personas.json` 也只是让这个库消失
+
 ## 现在能做什么
 
 - 用命令行或本地网页 UI 启动圆桌。
@@ -232,6 +242,7 @@ agent_roundtable/
 │   ├── agents.py            # 每个 Agent 发言时做什么
 │   ├── agent_llm_config.py  # 读写 config/agent_llms.json
 │   ├── loader.py            # 读取 domain_experts / persona_inspired / councils 配置
+│   ├── agency_library.py    # 可选内置角色库（agency-agents-zh，MIT）
 │   ├── discovery.py         # 自动发现已配置的 Agent 与知识库目录
 │   ├── epistemics.py        # 认识论标签：本地语料 / 风格推演 / 需联网核实
 │   ├── order.py             # 多轮发言顺序轮换
@@ -246,6 +257,7 @@ agent_roundtable/
 │   ├── domain_experts/      # 主线专家：接 experts 语料
 │   ├── persona_inspired/    # 人物风格启发：纯风格或 people 语料
 │   ├── councils/            # 圆桌名单：哪些 Agent 一起上桌
+│   ├── agency_personas.json # 可选内置角色库数据（320 卡，见 NOTICE）
 │   ├── agent_llms.json      # 每个 Agent 使用什么模型链
 │   └── model_example.json   # gateway 自动生成的完整模型速查清单
 ├── knowledge/               # 本地语料（不进 Git）
@@ -253,12 +265,14 @@ agent_roundtable/
 │   └── people/              # 人物多来源语料：book / x / news / report
 ├── scripts/                 # 语料导入辅助脚本
 │   ├── parse_twitter_jsonl.py
-│   └── import_person_source.py
+│   ├── import_person_source.py
+│   └── import_agency_personas.py  # 刷新内置角色库
 ├── rag/                     # 切分文档、建立索引、检索资料
 ├── vector_db/chroma/        # 本地生成的 RAG 索引
 ├── logs/                    # 每次运行生成的 Markdown 报告
 ├── tests/                   # 自动测试
 ├── requirements.txt         # Python 依赖
+├── NOTICE                   # 第三方许可署名（内置角色库来源）
 └── .env.example             # 环境变量模板
 ```
 
@@ -452,6 +466,9 @@ python -m rag.ingest --embedding-provider keyword --prune-obsolete
 混合 `china_debt`：`macroeconomics` + `desmond_shum` + `history`。
 
 这里的“风格启发”不是冒充本人，也不代表本人观点。它只是用类似的思考风格组织回答。
+
+> 以上是**默认圆桌**的专家。另有一个 **320 个角色的可选库**（工程 / 营销 / 安全 / 金融 / 学术等，默认不上桌），
+> 见上文「内置角色库」一节；用 `list_agents(source="agency")` 浏览。
 
 ## 如何新增一个专家
 
